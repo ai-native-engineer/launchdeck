@@ -18,7 +18,7 @@ cp "$EXECUTABLE" "$MACOS/LaunchDeck"
 /usr/libexec/PlistBuddy -c "Clear dict" "$CONTENTS/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string LaunchDeck" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string LaunchDeck" "$CONTENTS/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string dev.seunan.launchdeck" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string io.github.launchdeck" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string LaunchDeck" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.1.0" "$CONTENTS/Info.plist"

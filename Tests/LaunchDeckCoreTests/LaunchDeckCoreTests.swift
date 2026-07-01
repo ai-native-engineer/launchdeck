@@ -9,7 +9,7 @@ final class LaunchDeckCoreTests: XCTestCase {
         XCTAssertEqual(domains.count, 5)
         XCTAssertEqual(domains.first?.url.path, "/Users/example/Library/LaunchAgents")
         XCTAssertEqual(domains.filter(\.allowsWrites).map(\.name), ["User LaunchAgents"])
-        XCTAssertEqual(LaunchDeck.labelPrefix, "dev.seunan.launchdeck")
+        XCTAssertEqual(LaunchDeck.labelPrefix, "io.github.launchdeck")
     }
 
     func testGeneratedAppOwnedPlistRoundTripsAndLints() throws {
@@ -17,7 +17,7 @@ final class LaunchDeckCoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let plist = LaunchPlist(
-            label: "dev.seunan.launchdeck.test",
+            label: "io.github.launchdeck.test",
             programArguments: ["/bin/echo", "hello"],
             workingDirectory: "/tmp",
             environmentVariables: ["PATH": "/usr/bin:/bin"],
@@ -46,8 +46,8 @@ final class LaunchDeckCoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: userDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: systemDirectory, withIntermediateDirectories: true)
 
-        try LaunchPlist(label: "dev.seunan.launchdeck.inventory", programArguments: ["/bin/echo", "user"])
-            .writeXML(to: userDirectory.appending(path: "dev.seunan.launchdeck.inventory.plist"))
+        try LaunchPlist(label: "io.github.launchdeck.inventory", programArguments: ["/bin/echo", "user"])
+            .writeXML(to: userDirectory.appending(path: "io.github.launchdeck.inventory.plist"))
         try LaunchPlist(label: "com.example.system", programArguments: ["/bin/echo", "system"])
             .writeXML(to: systemDirectory.appending(path: "com.example.system.plist"))
 
@@ -56,7 +56,7 @@ final class LaunchDeckCoreTests: XCTestCase {
             .systemDaemons(systemDirectory),
         ]).inventory()
 
-        XCTAssertEqual(inventory.map(\.label), ["com.example.system", "dev.seunan.launchdeck.inventory"])
+        XCTAssertEqual(inventory.map(\.label), ["com.example.system", "io.github.launchdeck.inventory"])
         XCTAssertEqual(inventory.first?.isWritable, false)
         XCTAssertEqual(inventory.last?.isWritable, true)
         XCTAssertTrue(inventory.last?.isAppOwned == true)
@@ -92,8 +92,8 @@ final class LaunchDeckCoreTests: XCTestCase {
             return CommandResult(exitCode: 0, standardOutput: "ok")
         }
         let launchctl = Launchctl(uid: 501, runner: runner)
-        let label = "dev.seunan.launchdeck.test"
-        let plistURL = URL(filePath: "/tmp/dev.seunan.launchdeck.test.plist")
+        let label = "io.github.launchdeck.test"
+        let plistURL = URL(filePath: "/tmp/io.github.launchdeck.test.plist")
 
         _ = try launchctl.bootstrap(plistURL: plistURL)
         _ = try launchctl.bootout(plistURL: plistURL)
@@ -103,13 +103,13 @@ final class LaunchDeckCoreTests: XCTestCase {
         _ = try launchctl.status(label: label)
 
         XCTAssertEqual(calls, [
-            ["/usr/bin/env", "launchctl", "bootstrap", "gui/501", "/tmp/dev.seunan.launchdeck.test.plist"],
-            ["/usr/bin/env", "launchctl", "bootout", "gui/501", "/tmp/dev.seunan.launchdeck.test.plist"],
-            ["/usr/bin/env", "launchctl", "enable", "gui/501/dev.seunan.launchdeck.test"],
-            ["/usr/bin/env", "launchctl", "disable", "gui/501/dev.seunan.launchdeck.test"],
-            ["/usr/bin/env", "launchctl", "kickstart", "-kp", "gui/501/dev.seunan.launchdeck.test"],
-            ["/usr/bin/env", "launchctl", "list", "dev.seunan.launchdeck.test"],
-            ["/usr/bin/env", "launchctl", "print", "gui/501/dev.seunan.launchdeck.test"],
+            ["/usr/bin/env", "launchctl", "bootstrap", "gui/501", "/tmp/io.github.launchdeck.test.plist"],
+            ["/usr/bin/env", "launchctl", "bootout", "gui/501", "/tmp/io.github.launchdeck.test.plist"],
+            ["/usr/bin/env", "launchctl", "enable", "gui/501/io.github.launchdeck.test"],
+            ["/usr/bin/env", "launchctl", "disable", "gui/501/io.github.launchdeck.test"],
+            ["/usr/bin/env", "launchctl", "kickstart", "-kp", "gui/501/io.github.launchdeck.test"],
+            ["/usr/bin/env", "launchctl", "list", "io.github.launchdeck.test"],
+            ["/usr/bin/env", "launchctl", "print", "gui/501/io.github.launchdeck.test"],
             ["/usr/bin/env", "launchctl", "print-disabled", "gui/501"],
         ])
     }
@@ -118,14 +118,14 @@ final class LaunchDeckCoreTests: XCTestCase {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let plistURL = root.appending(path: "dev.seunan.launchdeck.test.plist")
+        let plistURL = root.appending(path: "io.github.launchdeck.test.plist")
         FileManager.default.createFile(atPath: plistURL.path, contents: Data())
 
         let runner = CommandRunner { _, arguments in
-            if arguments == ["launchctl", "list", "dev.seunan.launchdeck.test"] {
+            if arguments == ["launchctl", "list", "io.github.launchdeck.test"] {
                 return CommandResult(exitCode: 0, standardOutput: """
                 {
-                    "Label" = "dev.seunan.launchdeck.test";
+                    "Label" = "io.github.launchdeck.test";
                     "LastExitStatus" = 7;
                     "PID" = 1234;
                 };
@@ -135,7 +135,7 @@ final class LaunchDeckCoreTests: XCTestCase {
             if arguments == ["launchctl", "print-disabled", "gui/501"] {
                 return CommandResult(exitCode: 0, standardOutput: """
                 disabled services = {
-                    "dev.seunan.launchdeck.test" => true
+                    "io.github.launchdeck.test" => true
                 }
                 """)
             }
@@ -144,7 +144,7 @@ final class LaunchDeckCoreTests: XCTestCase {
         }
 
         let status = try Launchctl(uid: 501, runner: runner)
-            .status(label: "dev.seunan.launchdeck.test", plistURL: plistURL)
+            .status(label: "io.github.launchdeck.test", plistURL: plistURL)
 
         XCTAssertTrue(status.plistExists)
         XCTAssertTrue(status.loaded)
@@ -276,19 +276,19 @@ final class LaunchDeckCoreTests: XCTestCase {
         try service.unload(id: "svc")
         _ = try service.status(id: "svc")
 
-        let plistPath = root.appending(path: "Library/LaunchAgents/dev.seunan.launchdeck.task.svc.plist").path
+        let plistPath = root.appending(path: "Library/LaunchAgents/io.github.launchdeck.task.svc.plist").path
         let history = try service.history(id: "svc")
         XCTAssertTrue(FileManager.default.fileExists(atPath: plistPath))
         XCTAssertEqual(history.map(\.action), [.load, .runNow, .enable, .disable, .unload])
         XCTAssertEqual(calls, [
             ["/usr/bin/env", "plutil", "-lint", plistPath],
             ["/usr/bin/env", "launchctl", "bootstrap", "gui/501", plistPath],
-            ["/usr/bin/env", "launchctl", "kickstart", "-kp", "gui/501/dev.seunan.launchdeck.task.svc"],
-            ["/usr/bin/env", "launchctl", "enable", "gui/501/dev.seunan.launchdeck.task.svc"],
-            ["/usr/bin/env", "launchctl", "disable", "gui/501/dev.seunan.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "kickstart", "-kp", "gui/501/io.github.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "enable", "gui/501/io.github.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "disable", "gui/501/io.github.launchdeck.task.svc"],
             ["/usr/bin/env", "launchctl", "bootout", "gui/501", plistPath],
-            ["/usr/bin/env", "launchctl", "list", "dev.seunan.launchdeck.task.svc"],
-            ["/usr/bin/env", "launchctl", "print", "gui/501/dev.seunan.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "list", "io.github.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "print", "gui/501/io.github.launchdeck.task.svc"],
             ["/usr/bin/env", "launchctl", "print-disabled", "gui/501"],
         ])
     }

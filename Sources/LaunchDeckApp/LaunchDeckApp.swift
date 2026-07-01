@@ -927,6 +927,8 @@ private func needsAttention(_ job: LaunchJobSummary) -> Bool {
 }
 
 private func isPersonalAutomation(_ job: LaunchJobSummary) -> Bool {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path.lowercased()
+    let userName = NSUserName().lowercased()
     let text = [
         job.label,
         job.program ?? "",
@@ -936,9 +938,15 @@ private func isPersonalAutomation(_ job: LaunchJobSummary) -> Bool {
     .lowercased()
 
     return job.isAppOwned ||
-        job.label.hasPrefix("com.seungwonan.") ||
-        text.contains("/.agents/") ||
-        text.contains("/.local/bin/") ||
+        (!userName.isEmpty && job.label.lowercased().hasPrefix("com.\(userName).")) ||
+        text.contains("\(home)/.agents/") ||
+        text.contains("\(home)/.local/bin/") ||
+        text.contains("\(home)/bin/") ||
+        text.contains("\(home)/scripts/") ||
+        text.contains("~/.agents/") ||
+        text.contains("~/.local/bin/") ||
+        text.contains("~/bin/") ||
+        text.contains("~/scripts/") ||
         text.contains("voice-memos")
 }
 

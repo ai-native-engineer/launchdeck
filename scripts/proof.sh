@@ -79,7 +79,7 @@ render_and_lint_fixtures() {
 write_live_files() {
   local uid
   uid="$(id -u)"
-  LIVE_LABEL="dev.seunan.launchdeck.proof.$(date +%Y%m%d%H%M%S).$$"
+  LIVE_LABEL="io.github.launchdeck.proof.$(date +%Y%m%d%H%M%S).$$"
   local support_dir="$HOME/Library/Application Support/LaunchDeck/proof"
   local log_dir="$HOME/Library/Logs/LaunchDeck"
 

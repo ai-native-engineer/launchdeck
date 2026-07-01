@@ -2,7 +2,7 @@ import Foundation
 
 public enum LaunchDeck {
     public static let appName = "LaunchDeck"
-    public static let labelPrefix = "dev.seunan.launchdeck"
+    public static let labelPrefix = "io.github.launchdeck"
 }
 
 public enum LaunchDeckError: Error, CustomStringConvertible, LocalizedError {

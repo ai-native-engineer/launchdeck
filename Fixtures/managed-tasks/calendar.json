@@ -5,7 +5,7 @@
     "PATH" : "/usr/bin:/bin"
   },
   "id" : "fixture-calendar",
-  "label" : "dev.seunan.launchdeck.fixture.calendar",
+  "label" : "io.github.launchdeck.fixture.calendar",
   "programArguments" : [
     "/bin/echo",
     "calendar"

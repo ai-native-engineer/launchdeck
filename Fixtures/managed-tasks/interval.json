@@ -5,7 +5,7 @@
     "PATH" : "/usr/bin:/bin"
   },
   "id" : "fixture-interval",
-  "label" : "dev.seunan.launchdeck.fixture.interval",
+  "label" : "io.github.launchdeck.fixture.interval",
   "programArguments" : [
     "/bin/echo",
     "interval"
