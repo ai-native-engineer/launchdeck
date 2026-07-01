@@ -179,8 +179,12 @@ run swift build
 run swift test
 run no_placeholders
 run render_and_lint_fixtures
-run live_launchd_check
-run cleanup_verified
+if [ "${RUN_LIVE_LAUNCHD:-0}" = "1" ]; then
+  run live_launchd_check
+  run cleanup_verified
+else
+  printf '\nSKIP: live_launchd_check (set RUN_LIVE_LAUNCHD=1 to create a temporary LaunchAgent)\n'
+fi
 
 printf '\nProof summary: %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 if [ "$FAIL_COUNT" -ne 0 ]; then
