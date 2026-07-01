@@ -133,7 +133,12 @@ private struct LaunchDeckContentView: View {
 
             Group {
                 if let job = selectedJob {
-                    JobDetailView(job: job)
+                    JobDetailView(
+                        job: job,
+                        onInventoryChanged: {
+                            jobs = LaunchInventoryService().inventory()
+                        }
+                    )
                         .id(job.id)
                 } else {
                     ContentUnavailableView("항목을 선택하세요", systemImage: "list.bullet.rectangle")
@@ -259,14 +264,22 @@ private struct JobRow: View {
 
 private struct JobDetailView: View {
     let job: LaunchJobSummary
+    let onInventoryChanged: () -> Void
 
     @State private var plist: LaunchPlist?
     @State private var status: LaunchctlStatusSnapshot?
     @State private var errorText = ""
     @State private var rawDiagnostic = ""
+    @State private var editor = PlistEditorState()
+    @State private var stdoutLog = ""
+    @State private var stderrLog = ""
 
-    private var canManage: Bool {
-        job.isWritable && job.isAppOwned
+    private var canControl: Bool {
+        job.isWritable && isPersonalAutomation(job) && !isAppleSystem(job) && job.parseError == nil
+    }
+
+    private var canEdit: Bool {
+        canControl && plist != nil && job.parseError == nil
     }
 
     var body: some View {
@@ -280,16 +293,17 @@ private struct JobDetailView: View {
                     header
                     decisionHero
 
-                    if !canManage {
-                        notice("읽기 전용", "LaunchDeck이 만든 사용자 LaunchAgent만 불러오기, 내리기, 실행, 활성화, 비활성화를 허용합니다.")
+                    if !canControl {
+                        notice("읽기 전용", "내 자동화로 분류된 사용자 LaunchAgent만 편집, 실행, 활성화, 비활성화를 허용합니다.")
                     }
 
+                    editorSection
                     contextSection
+                    logSection
+                    actionSection
                     statusSection
                     commandSection
                     scheduleSection
-                    logSection
-                    actionSection
 
                     if !rawDiagnostic.isEmpty {
                         textSection("원본 진단", rawDiagnostic)
@@ -325,7 +339,7 @@ private struct JobDetailView: View {
             HStack(spacing: 8) {
                 tagPill(koreanDomain(job.domainName))
                 tagPill(ownershipTag(for: job))
-                tagPill(canManage ? "쓰기 가능" : "읽기 전용")
+                tagPill(canControl ? "편집 가능" : "읽기 전용")
             }
         }
     }
@@ -342,6 +356,35 @@ private struct JobDetailView: View {
                 ("끄면", serviceImpact(for: job, plist: plist)),
                 ("확인할 것", serviceCheckItems(for: job, plist: plist, status: status)),
             ])
+        }
+    }
+
+    private var editorSection: some View {
+        section("편집기") {
+            VStack(alignment: .leading, spacing: 12) {
+                EditorField(title: "Program", text: $editor.program, placeholder: "없음")
+                    .disabled(!canEdit)
+                EditorTextArea(title: "ProgramArguments", text: $editor.arguments, height: 86)
+                    .disabled(!canEdit)
+                EditorField(title: "WorkingDirectory", text: $editor.workingDirectory, placeholder: "기본값")
+                    .disabled(!canEdit)
+                EditorTextArea(title: "EnvironmentVariables", text: $editor.environment, height: 70)
+                    .disabled(!canEdit)
+                EditorField(title: "StandardOutPath", text: $editor.standardOutPath, placeholder: "없음")
+                    .disabled(!canEdit)
+                EditorField(title: "StandardErrorPath", text: $editor.standardErrorPath, placeholder: "없음")
+                    .disabled(!canEdit)
+
+                HStack {
+                    Button("저장") { saveEditor() }
+                        .disabled(!canEdit)
+                    Button("원본 다시 읽기") { loadDetails() }
+                    Spacer()
+                    Text("인자와 환경 변수는 한 줄에 하나씩 입력")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -388,10 +431,18 @@ private struct JobDetailView: View {
             ])
 
             HStack {
+                Button("로그 새로고침") { loadLogPreviews(from: plist) }
                 Button("표준 출력 열기") { openPath(plist?.standardOutPath) }
                     .disabled(plist?.standardOutPath == nil)
                 Button("표준 에러 열기") { openPath(plist?.standardErrorPath) }
                     .disabled(plist?.standardErrorPath == nil)
+            }
+
+            if !stdoutLog.isEmpty {
+                LogPreview(title: "표준 출력", text: stdoutLog)
+            }
+            if !stderrLog.isEmpty {
+                LogPreview(title: "표준 에러", text: stderrLog)
             }
         }
     }
@@ -403,9 +454,9 @@ private struct JobDetailView: View {
                 Button("내리기") { run("내리기") { try Launchctl().bootout(plistURL: job.plistURL) } }
                 Button("활성화") { run("활성화") { try Launchctl().enable(label: job.label) } }
                 Button("비활성화") { run("비활성화") { try Launchctl().disable(label: job.label) } }
-                Button("지금 실행") { run("지금 실행") { try Launchctl().kickstart(label: job.label) } }
+                Button("지금 실행") { runNow() }
             }
-            .disabled(!canManage)
+            .disabled(!canControl)
 
             HStack {
                 Button("상태 새로고침") { refreshStatus() }
@@ -512,9 +563,15 @@ private struct JobDetailView: View {
         status = nil
 
         do {
-            plist = try LaunchPlist.read(from: job.plistURL)
+            let loadedPlist = try LaunchPlist.read(from: job.plistURL)
+            plist = loadedPlist
+            editor = PlistEditorState(plist: loadedPlist)
+            loadLogPreviews(from: loadedPlist)
         } catch {
             plist = nil
+            editor = PlistEditorState()
+            stdoutLog = ""
+            stderrLog = ""
             errorText = "plist를 읽을 수 없습니다: \(error)"
         }
     }
@@ -531,13 +588,72 @@ private struct JobDetailView: View {
         }
     }
 
+    private func saveEditor() {
+        guard canEdit, let plist else {
+            return
+        }
+
+        let tempURL = job.plistURL
+            .deletingLastPathComponent()
+            .appending(path: ".\(job.plistURL.lastPathComponent).launchdeck-tmp")
+
+        do {
+            let updated = try editor.launchPlist(label: plist.label, preserving: plist)
+            let data = try updated.xmlData()
+            try data.write(to: tempURL, options: .atomic)
+
+            let lint = try PlistLinter().lint(tempURL)
+            guard lint.succeeded else {
+                throw LaunchDeckError.commandFailed("plutil -lint", lint)
+            }
+
+            try data.write(to: job.plistURL, options: .atomic)
+            try? FileManager.default.removeItem(at: tempURL)
+            self.plist = updated
+            editor = PlistEditorState(plist: updated)
+            loadLogPreviews(from: updated)
+            onInventoryChanged()
+            errorText = "저장됨: plutil -lint 통과"
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            errorText = "저장 실패: \(error)"
+        }
+    }
+
     private func run(_ name: String, action: () throws -> CommandResult) {
         do {
             let result = try action()
             errorText = "\(name): 종료 코드 \(result.exitCode)"
             refreshStatus()
+            loadLogPreviews(from: plist)
         } catch {
             errorText = "\(name): \(error)"
+        }
+    }
+
+    private func runNow() {
+        do {
+            let launchctl = Launchctl()
+            let snapshot = try launchctl.status(label: job.label, plistURL: job.plistURL)
+
+            if snapshot.loaded {
+                let bootout = try launchctl.bootout(plistURL: job.plistURL)
+                guard bootout.succeeded else {
+                    throw LaunchDeckError.commandFailed("launchctl bootout", bootout)
+                }
+            }
+
+            let bootstrap = try launchctl.bootstrap(plistURL: job.plistURL)
+            guard bootstrap.succeeded else {
+                throw LaunchDeckError.commandFailed("launchctl bootstrap", bootstrap)
+            }
+
+            let kickstart = try launchctl.kickstart(label: job.label)
+            errorText = "지금 실행: 종료 코드 \(kickstart.exitCode)"
+            refreshStatus()
+            loadLogPreviews(from: plist)
+        } catch {
+            errorText = "지금 실행: \(error)"
         }
     }
 
@@ -552,6 +668,11 @@ private struct JobDetailView: View {
         } catch {
             errorText = "원본 진단을 읽을 수 없습니다: \(error)"
         }
+    }
+
+    private func loadLogPreviews(from plist: LaunchPlist?) {
+        stdoutLog = logTail(path: plist?.standardOutPath)
+        stderrLog = logTail(path: plist?.standardErrorPath)
     }
 
     private func scrollToTop(_ proxy: ScrollViewProxy) {
@@ -585,6 +706,112 @@ private struct InfoGrid: View {
             }
         }
         .font(.callout)
+    }
+}
+
+private struct PlistEditorState {
+    var program = ""
+    var arguments = ""
+    var workingDirectory = ""
+    var environment = ""
+    var standardOutPath = ""
+    var standardErrorPath = ""
+
+    init() {}
+
+    init(plist: LaunchPlist) {
+        program = plist.program ?? ""
+        arguments = plist.programArguments.joined(separator: "\n")
+        workingDirectory = plist.workingDirectory ?? ""
+        environment = plist.environmentVariables
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: "\n")
+        standardOutPath = plist.standardOutPath ?? ""
+        standardErrorPath = plist.standardErrorPath ?? ""
+    }
+
+    func launchPlist(label: String, preserving plist: LaunchPlist) throws -> LaunchPlist {
+        LaunchPlist(
+            label: label,
+            program: blankNil(program),
+            programArguments: lineValues(arguments),
+            workingDirectory: blankNil(workingDirectory),
+            environmentVariables: try environmentDictionary(environment),
+            standardOutPath: blankNil(standardOutPath),
+            standardErrorPath: blankNil(standardErrorPath),
+            startInterval: plist.startInterval,
+            startCalendarIntervals: plist.startCalendarIntervals,
+            timeOut: plist.timeOut,
+            launchOnlyOnce: plist.launchOnlyOnce,
+            runAtLoad: plist.runAtLoad
+        )
+    }
+}
+
+private struct EditorField: View {
+    let title: String
+    @Binding var text: String
+    let placeholder: String
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+            GridRow {
+                Text(title)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 150, alignment: .leading)
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+            }
+        }
+        .font(.callout)
+    }
+}
+
+private struct EditorTextArea: View {
+    let title: String
+    @Binding var text: String
+    let height: CGFloat
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+            GridRow(alignment: .top) {
+                Text(title)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 150, alignment: .leading)
+                    .padding(.top, 6)
+                TextEditor(text: $text)
+                    .font(.system(.body, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .frame(minHeight: height)
+                    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .font(.callout)
+    }
+}
+
+private struct LogPreview: View {
+    let title: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                Text(text)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(minHeight: 90, maxHeight: 180)
+        }
+        .padding(10)
+        .background(.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -1100,6 +1327,73 @@ private func cleanupSignals(
 
 private func executablePath(for plist: LaunchPlist?) -> String? {
     plist?.program ?? plist?.programArguments.first
+}
+
+private enum LaunchDeckEditorError: Error, CustomStringConvertible {
+    case invalidEnvironmentLine(String)
+
+    var description: String {
+        switch self {
+        case let .invalidEnvironmentLine(line):
+            "환경 변수는 KEY=VALUE 형식이어야 합니다: \(line)"
+        }
+    }
+}
+
+private func blankNil(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+private func lineValues(_ value: String) -> [String] {
+    value
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+}
+
+private func environmentDictionary(_ value: String) throws -> [String: String] {
+    var result: [String: String] = [:]
+    for line in lineValues(value) {
+        guard let separator = line.firstIndex(of: "=") else {
+            throw LaunchDeckEditorError.invalidEnvironmentLine(line)
+        }
+        let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.isEmpty {
+            throw LaunchDeckEditorError.invalidEnvironmentLine(line)
+        }
+        result[key] = value
+    }
+    return result
+}
+
+private func logTail(path: String?) -> String {
+    guard let path = path.flatMap(blankNil) else {
+        return ""
+    }
+    guard FileManager.default.fileExists(atPath: path) else {
+        return "파일 없음: \(shortPath(path))"
+    }
+
+    do {
+        let handle = try FileHandle(forReadingFrom: URL(filePath: path))
+        defer { try? handle.close() }
+
+        // ponytail: tail only; add live streaming if logs need follow mode.
+        let maxBytes: UInt64 = 80 * 1024
+        let size = try handle.seekToEnd()
+        try handle.seek(toOffset: size > maxBytes ? size - maxBytes : 0)
+        let data = try handle.readToEnd() ?? Data()
+        let text = String(decoding: data, as: UTF8.self)
+
+        if text.isEmpty {
+            return "로그가 비어 있습니다."
+        }
+        return size > maxBytes ? "...\n\(text)" : text
+    } catch {
+        return "로그를 읽을 수 없습니다: \(error)"
+    }
 }
 
 private func decisionEvidence(
