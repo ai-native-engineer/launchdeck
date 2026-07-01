@@ -86,9 +86,50 @@ final class LaunchDeckCoreTests: XCTestCase {
             ["/usr/bin/env", "launchctl", "enable", "gui/501/dev.seunan.launchdeck.test"],
             ["/usr/bin/env", "launchctl", "disable", "gui/501/dev.seunan.launchdeck.test"],
             ["/usr/bin/env", "launchctl", "kickstart", "-kp", "gui/501/dev.seunan.launchdeck.test"],
+            ["/usr/bin/env", "launchctl", "list", "dev.seunan.launchdeck.test"],
             ["/usr/bin/env", "launchctl", "print", "gui/501/dev.seunan.launchdeck.test"],
             ["/usr/bin/env", "launchctl", "print-disabled", "gui/501"],
         ])
+    }
+
+    func testStatusSnapshotDistinguishesPlistLoadedPIDDisabledAndLastExit() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let plistURL = root.appending(path: "dev.seunan.launchdeck.test.plist")
+        FileManager.default.createFile(atPath: plistURL.path, contents: Data())
+
+        let runner = CommandRunner { _, arguments in
+            if arguments == ["launchctl", "list", "dev.seunan.launchdeck.test"] {
+                return CommandResult(exitCode: 0, standardOutput: """
+                {
+                    "Label" = "dev.seunan.launchdeck.test";
+                    "LastExitStatus" = 7;
+                    "PID" = 1234;
+                };
+                """)
+            }
+
+            if arguments == ["launchctl", "print-disabled", "gui/501"] {
+                return CommandResult(exitCode: 0, standardOutput: """
+                disabled services = {
+                    "dev.seunan.launchdeck.test" => true
+                }
+                """)
+            }
+
+            return CommandResult(exitCode: 0, standardOutput: "raw diagnostic")
+        }
+
+        let status = try Launchctl(uid: 501, runner: runner)
+            .status(label: "dev.seunan.launchdeck.test", plistURL: plistURL)
+
+        XCTAssertTrue(status.plistExists)
+        XCTAssertTrue(status.loaded)
+        XCTAssertEqual(status.runningPID, 1234)
+        XCTAssertEqual(status.lastExitStatus, 7)
+        XCTAssertEqual(status.disabled, true)
+        XCTAssertTrue(status.rawDiagnosticOutput.contains("raw diagnostic"))
     }
 
     func testWriteAndServiceTargetsRejectUnsafeLabels() throws {
@@ -214,7 +255,9 @@ final class LaunchDeckCoreTests: XCTestCase {
         _ = try service.status(id: "svc")
 
         let plistPath = root.appending(path: "Library/LaunchAgents/dev.seunan.launchdeck.task.svc.plist").path
+        let history = try service.history(id: "svc")
         XCTAssertTrue(FileManager.default.fileExists(atPath: plistPath))
+        XCTAssertEqual(history.map(\.action), [.load, .runNow, .enable, .disable, .unload])
         XCTAssertEqual(calls, [
             ["/usr/bin/env", "plutil", "-lint", plistPath],
             ["/usr/bin/env", "launchctl", "bootstrap", "gui/501", plistPath],
@@ -222,6 +265,7 @@ final class LaunchDeckCoreTests: XCTestCase {
             ["/usr/bin/env", "launchctl", "enable", "gui/501/dev.seunan.launchdeck.task.svc"],
             ["/usr/bin/env", "launchctl", "disable", "gui/501/dev.seunan.launchdeck.task.svc"],
             ["/usr/bin/env", "launchctl", "bootout", "gui/501", plistPath],
+            ["/usr/bin/env", "launchctl", "list", "dev.seunan.launchdeck.task.svc"],
             ["/usr/bin/env", "launchctl", "print", "gui/501/dev.seunan.launchdeck.task.svc"],
             ["/usr/bin/env", "launchctl", "print-disabled", "gui/501"],
         ])

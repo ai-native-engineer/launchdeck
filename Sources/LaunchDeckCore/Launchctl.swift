@@ -83,8 +83,26 @@ public struct PlistLinter {
 public struct LaunchctlStatusSnapshot: Equatable, Sendable {
     public let label: String
     public let serviceTarget: String
+    public let plistURL: URL?
+    public let plistExists: Bool
+    public let loaded: Bool
+    public let runningPID: Int?
+    public let lastExitStatus: Int?
+    public let disabled: Bool?
+    public let listResult: CommandResult
     public let printResult: CommandResult
     public let disabledResult: CommandResult
+
+    public var rawDiagnosticOutput: String {
+        [
+            listResult.standardOutput,
+            listResult.standardError,
+            printResult.standardOutput,
+            printResult.standardError,
+            disabledResult.standardOutput,
+            disabledResult.standardError,
+        ].joined(separator: "\n")
+    }
 }
 
 public struct Launchctl {
@@ -128,6 +146,10 @@ public struct Launchctl {
         return try runner.runTool("launchctl", arguments: arguments)
     }
 
+    public func list(label: String) throws -> CommandResult {
+        try runner.runTool("launchctl", arguments: ["list", label])
+    }
+
     public func print(label: String) throws -> CommandResult {
         try runner.runTool("launchctl", arguments: ["print", serviceTarget(for: label)])
     }
@@ -136,17 +158,71 @@ public struct Launchctl {
         try runner.runTool("launchctl", arguments: ["print-disabled", guiDomain])
     }
 
-    public func status(label: String) throws -> LaunchctlStatusSnapshot {
-        LaunchctlStatusSnapshot(
+    public func status(label: String, plistURL: URL? = nil, fileManager: FileManager = .default) throws -> LaunchctlStatusSnapshot {
+        let listResult = try list(label: label)
+        let printResult = try print(label: label)
+        let disabledResult = try printDisabled()
+        let parsedList = Self.parseListOutput(listResult.standardOutput)
+
+        return LaunchctlStatusSnapshot(
             label: label,
             serviceTarget: try serviceTarget(for: label),
-            printResult: try print(label: label),
-            disabledResult: try printDisabled()
+            plistURL: plistURL,
+            plistExists: plistURL.map { fileManager.fileExists(atPath: $0.path) } ?? false,
+            loaded: listResult.succeeded,
+            runningPID: parsedList.pid,
+            lastExitStatus: parsedList.lastExitStatus,
+            disabled: disabledResult.succeeded ? Self.parseDisabled(label: label, output: disabledResult.standardOutput) : nil,
+            listResult: listResult,
+            printResult: printResult,
+            disabledResult: disabledResult
         )
     }
 
     public func serviceTarget(for label: String) throws -> String {
         try LaunchLabel.validateServiceLabel(label)
         return "\(guiDomain)/\(label)"
+    }
+
+    private static func parseListOutput(_ output: String) -> (pid: Int?, lastExitStatus: Int?) {
+        let pid = intField("PID", in: output)
+        let lastExitStatus = intField("LastExitStatus", in: output)
+
+        if pid != nil || lastExitStatus != nil {
+            return (pid, lastExitStatus)
+        }
+
+        let rows = output
+            .split(separator: "\n")
+            .map { $0.split(whereSeparator: \.isWhitespace).map(String.init) }
+            .filter { !$0.isEmpty && $0.first != "PID" }
+
+        guard let row = rows.first, row.count >= 2 else {
+            return (nil, nil)
+        }
+
+        return (Int(row[0]), Int(row[1]))
+    }
+
+    private static func intField(_ name: String, in output: String) -> Int? {
+        for line in output.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let quotedPrefix = "\"\(name)\" = "
+            let plainPrefix = "\(name) = "
+
+            if trimmed.hasPrefix(quotedPrefix) {
+                return Int(trimmed.dropFirst(quotedPrefix.count).trimmingCharacters(in: CharacterSet(charactersIn: ";")))
+            }
+
+            if trimmed.hasPrefix(plainPrefix) {
+                return Int(trimmed.dropFirst(plainPrefix.count).trimmingCharacters(in: CharacterSet(charactersIn: ";")))
+            }
+        }
+
+        return nil
+    }
+
+    private static func parseDisabled(label: String, output: String) -> Bool {
+        output.contains("\"\(label)\" => true") || output.contains("\(label) => true")
     }
 }

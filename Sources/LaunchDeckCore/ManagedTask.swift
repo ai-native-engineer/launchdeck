@@ -15,6 +15,10 @@ public struct LaunchDeckPaths: Equatable, Sendable {
         appSupportDirectory.appending(path: "tasks", directoryHint: .isDirectory)
     }
 
+    public var historyDirectory: URL {
+        appSupportDirectory.appending(path: "history", directoryHint: .isDirectory)
+    }
+
     public var logDirectory: URL {
         home.appending(path: "Library/Logs/LaunchDeck", directoryHint: .isDirectory)
     }
@@ -78,6 +82,43 @@ public enum AfterRunPolicy: String, Codable, Equatable, Sendable {
     case keep
     case disable
     case cleanupPlist
+}
+
+public enum ManagedTaskAction: String, Codable, Equatable, Sendable {
+    case load
+    case unload
+    case runNow
+    case enable
+    case disable
+}
+
+public struct RunHistoryEntry: Codable, Equatable, Sendable {
+    public let id: UUID
+    public let taskID: String
+    public let label: String
+    public let action: ManagedTaskAction
+    public let exitCode: Int32
+    public let standardOutput: String
+    public let standardError: String
+    public let occurredAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        taskID: String,
+        label: String,
+        action: ManagedTaskAction,
+        result: CommandResult,
+        occurredAt: Date = Date()
+    ) {
+        self.id = id
+        self.taskID = taskID
+        self.label = label
+        self.action = action
+        self.exitCode = result.exitCode
+        self.standardOutput = result.standardOutput
+        self.standardError = result.standardError
+        self.occurredAt = occurredAt
+    }
 }
 
 public struct ManagedTask: Codable, Equatable, Identifiable, Sendable {
@@ -331,5 +372,41 @@ public struct ManagedTaskStore: Sendable {
 
     public func metadataURL(for id: String) -> URL {
         paths.metadataDirectory.appending(path: "\(id).json", directoryHint: .notDirectory)
+    }
+
+    public func appendHistory(_ entry: RunHistoryEntry, fileManager: FileManager = .default) throws {
+        try fileManager.createDirectory(at: paths.historyDirectory, withIntermediateDirectories: true)
+        let url = historyURL(for: entry.taskID)
+
+        if !fileManager.fileExists(atPath: url.path) {
+            fileManager.createFile(atPath: url.path, contents: nil)
+        }
+
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+
+        var data = try JSONEncoder().encode(entry)
+        data.append(0x0A)
+        handle.write(data)
+    }
+
+    public func history(id: String, fileManager: FileManager = .default) throws -> [RunHistoryEntry] {
+        let url = historyURL(for: id)
+        if !fileManager.fileExists(atPath: url.path) {
+            return []
+        }
+
+        let data = try String(contentsOf: url, encoding: .utf8)
+        let decoder = JSONDecoder()
+        return try data
+            .split(separator: "\n")
+            .map { line in
+                try decoder.decode(RunHistoryEntry.self, from: Data(line.utf8))
+            }
+    }
+
+    public func historyURL(for id: String) -> URL {
+        paths.historyDirectory.appending(path: "\(id).jsonl", directoryHint: .notDirectory)
     }
 }

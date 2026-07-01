@@ -100,7 +100,7 @@ log="\$2"
   echo "exit_status=0"
 } >> "\$log"
 echo "done" > "\$marker"
-sleep 0.2
+sleep 2
 exit 0
 EOF_SCRIPT
   chmod +x "$LIVE_SCRIPT"
@@ -150,6 +150,14 @@ live_launchd_check() {
   launchctl bootstrap "gui/$(id -u)" "$LIVE_PLIST" || return 1
   launchctl kickstart -kp "gui/$(id -u)/$LIVE_LABEL" || return 1
   wait_for_marker || return 1
+  local status_output
+  status_output="$(.build/debug/launchdeck inspect "$LIVE_LABEL" "$LIVE_PLIST")" || return 1
+  printf '%s\n' "$status_output"
+  printf '%s\n' "$status_output" | grep -q 'plist_exists=true' || return 1
+  printf '%s\n' "$status_output" | grep -q 'loaded=true' || return 1
+  printf '%s\n' "$status_output" | grep -Eq 'running_pid=[0-9]+' || return 1
+  printf '%s\n' "$status_output" | grep -Eq 'last_exit_status=[0-9]+' || return 1
+  printf '%s\n' "$status_output" | grep -q 'disabled=false' || return 1
   launchctl bootout "gui/$(id -u)" "$LIVE_PLIST" || return 1
   grep -q 'exit_status=0' "$LIVE_LOG" || return 1
   remove_if_exists "$LIVE_PLIST" "$LIVE_SCRIPT" "$LIVE_TASK_JSON" "$LIVE_MARKER"

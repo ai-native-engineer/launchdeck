@@ -83,11 +83,15 @@ struct LaunchDeckCLI {
         case "status":
             guard args.count == 2 else { throw CLIError.usage }
             let snapshot = try LaunchDeckService().status(id: args[1])
-            print(snapshot.serviceTarget)
-            print(snapshot.printResult.standardOutput, terminator: "")
-            print(snapshot.printResult.standardError, terminator: "")
-            print(snapshot.disabledResult.standardOutput, terminator: "")
-            print(snapshot.disabledResult.standardError, terminator: "")
+            printStatus(snapshot)
+        case "inspect":
+            guard args.count == 3 else { throw CLIError.usage }
+            printStatus(try Launchctl().status(label: args[1], plistURL: URL(filePath: args[2])))
+        case "history":
+            guard args.count == 2 else { throw CLIError.usage }
+            for entry in try LaunchDeckService().history(id: args[1]) {
+                print("\(entry.taskID)\t\(entry.action.rawValue)\t\(entry.exitCode)\t\(entry.occurredAt)")
+            }
         case "log":
             guard args.count == 3, let stream = LogStream(rawValue: args[2]) else {
                 throw CLIError.usage
@@ -142,6 +146,19 @@ struct LaunchDeckCLI {
         try task.launchPlist().writeXML(to: outputURL, appOwned: true)
         return outputURL
     }
+
+    private static func printStatus(_ snapshot: LaunchctlStatusSnapshot) {
+        print("label=\(snapshot.label)")
+        print("service_target=\(snapshot.serviceTarget)")
+        print("plist_exists=\(snapshot.plistExists)")
+        print("loaded=\(snapshot.loaded)")
+        print("running_pid=\(snapshot.runningPID.map(String.init) ?? "nil")")
+        print("last_exit_status=\(snapshot.lastExitStatus.map(String.init) ?? "nil")")
+        print("disabled=\(snapshot.disabled.map(String.init) ?? "unknown")")
+        print("raw_list_exit=\(snapshot.listResult.exitCode)")
+        print("raw_print_exit=\(snapshot.printResult.exitCode)")
+        print("raw_disabled_exit=\(snapshot.disabledResult.exitCode)")
+    }
 }
 
 private enum CLIError: Error, CustomStringConvertible {
@@ -156,7 +173,8 @@ private enum CLIError: Error, CustomStringConvertible {
           launchdeck create-interval <id> <seconds> -- <program> [args...]
           launchdeck create-calendar <id> <minute> <hour> -- <program> [args...]
           launchdeck create-one-shot <id> <unix-seconds> -- <program> [args...]
-          launchdeck load|unload|run|enable|disable|status <id>
+          launchdeck load|unload|run|enable|disable|status|history <id>
+          launchdeck inspect <label> <plist-path>
           launchdeck log <id> <stdout|stderr>
           launchdeck render-plist <task-json> <plist-output>
           launchdeck version

@@ -24,6 +24,10 @@ public struct LaunchDeckService {
         try store.list()
     }
 
+    public func history(id: String) throws -> [RunHistoryEntry] {
+        try store.history(id: id)
+    }
+
     public func save(_ task: ManagedTask) throws {
         try store.save(task)
     }
@@ -38,38 +42,49 @@ public struct LaunchDeckService {
 
     @discardableResult
     public func load(id: String) throws -> CommandResult {
+        let task = try store.load(id: id)
         let url = try installPlist(id: id)
-        return try requireSuccess("launchctl bootstrap", launchctl.bootstrap(plistURL: url))
+        return try runAction(task: task, action: .load) {
+            try launchctl.bootstrap(plistURL: url)
+        }
     }
 
     @discardableResult
     public func unload(id: String) throws -> CommandResult {
         let task = try store.load(id: id)
         let url = try agentStore.plistURL(for: task.label)
-        return try requireSuccess("launchctl bootout", launchctl.bootout(plistURL: url))
+        return try runAction(task: task, action: .unload) {
+            try launchctl.bootout(plistURL: url)
+        }
     }
 
     @discardableResult
     public func runNow(id: String) throws -> CommandResult {
         let task = try store.load(id: id)
-        return try requireSuccess("launchctl kickstart", launchctl.kickstart(label: task.label))
+        return try runAction(task: task, action: .runNow) {
+            try launchctl.kickstart(label: task.label)
+        }
     }
 
     @discardableResult
     public func enable(id: String) throws -> CommandResult {
         let task = try store.load(id: id)
-        return try requireSuccess("launchctl enable", launchctl.enable(label: task.label))
+        return try runAction(task: task, action: .enable) {
+            try launchctl.enable(label: task.label)
+        }
     }
 
     @discardableResult
     public func disable(id: String) throws -> CommandResult {
         let task = try store.load(id: id)
-        return try requireSuccess("launchctl disable", launchctl.disable(label: task.label))
+        return try runAction(task: task, action: .disable) {
+            try launchctl.disable(label: task.label)
+        }
     }
 
     public func status(id: String) throws -> LaunchctlStatusSnapshot {
         let task = try store.load(id: id)
-        return try launchctl.status(label: task.label)
+        return try launchctl.status(label: task.label, plistURL: try agentStore.plistURL(for: task.label))
     }
 
     public func logText(id: String, stream: LogStream) throws -> String {
@@ -90,5 +105,16 @@ public struct LaunchDeckService {
             throw LaunchDeckError.commandFailed(command, result)
         }
         return result
+    }
+
+    @discardableResult
+    private func runAction(
+        task: ManagedTask,
+        action: ManagedTaskAction,
+        command: () throws -> CommandResult
+    ) throws -> CommandResult {
+        let result = try command()
+        try store.appendHistory(RunHistoryEntry(taskID: task.id, label: task.label, action: action, result: result))
+        return try requireSuccess("launchctl \(action.rawValue)", result)
     }
 }
