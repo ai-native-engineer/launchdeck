@@ -291,17 +291,14 @@ private struct JobDetailView: View {
 
                 VStack(alignment: .leading, spacing: 18) {
                     header
-                    decisionHero
+                    controlSection
 
                     if !canControl {
                         notice("읽기 전용", "내 자동화로 분류된 사용자 LaunchAgent만 편집, 실행, 활성화, 비활성화를 허용합니다.")
                     }
 
                     editorSection
-                    contextSection
                     logSection
-                    actionSection
-                    statusSection
                     commandSection
                     scheduleSection
 
@@ -344,18 +341,29 @@ private struct JobDetailView: View {
         }
     }
 
-    private var decisionHero: some View {
-        DecisionHero(summary: decisionSummary(for: job, plist: plist, status: status))
-    }
-
-    private var contextSection: some View {
-        section("질문별 해석") {
+    private var controlSection: some View {
+        section("상태 및 작업") {
             InfoGrid(rows: [
-                ("이게 뭐냐", servicePurpose(for: job, plist: plist)),
-                ("왜 켜져 있나", serviceNeed(for: job, plist: plist)),
-                ("끄면", serviceImpact(for: job, plist: plist)),
-                ("확인할 것", serviceCheckItems(for: job, plist: plist, status: status)),
+                ("plist 파일", plistExistsText),
+                ("launchd 로드", loadedText),
+                ("실행 PID", runningPIDText),
+                ("비활성화", disabledText),
+                ("마지막 종료 코드", lastExitStatusText),
             ])
+
+            HStack {
+                Button("지금 실행") { runNow() }
+                Button("로드") { run("로드") { try Launchctl().bootstrap(plistURL: job.plistURL) } }
+                Button("언로드") { run("언로드") { try Launchctl().bootout(plistURL: job.plistURL) } }
+                Button("활성화") { run("활성화") { try Launchctl().enable(label: job.label) } }
+                Button("비활성화") { run("비활성화") { try Launchctl().disable(label: job.label) } }
+            }
+            .disabled(!canControl)
+
+            HStack {
+                Button("상태 새로고침") { refreshStatus() }
+                Button("원본 진단 보기") { showRawDiagnostic() }
+            }
         }
     }
 
@@ -385,18 +393,6 @@ private struct JobDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-    }
-
-    private var statusSection: some View {
-        section("상태") {
-            InfoGrid(rows: [
-                ("plist 파일", plistExistsText),
-                ("launchd 로드", loadedText),
-                ("실행 PID", runningPIDText),
-                ("비활성화", disabledText),
-                ("마지막 종료 코드", lastExitStatusText),
-            ])
         }
     }
 
@@ -431,10 +427,13 @@ private struct JobDetailView: View {
             ])
 
             HStack {
-                Button("로그 새로고침") { loadLogPreviews(from: plist) }
-                Button("표준 출력 열기") { openPath(plist?.standardOutPath) }
+                Button("표준 출력 보기") { stdoutLog = logTail(path: plist?.standardOutPath) }
                     .disabled(plist?.standardOutPath == nil)
-                Button("표준 에러 열기") { openPath(plist?.standardErrorPath) }
+                Button("표준 에러 보기") { stderrLog = logTail(path: plist?.standardErrorPath) }
+                    .disabled(plist?.standardErrorPath == nil)
+                Button("표준 출력 파일 열기") { openPath(plist?.standardOutPath) }
+                    .disabled(plist?.standardOutPath == nil)
+                Button("표준 에러 파일 열기") { openPath(plist?.standardErrorPath) }
                     .disabled(plist?.standardErrorPath == nil)
             }
 
@@ -443,24 +442,6 @@ private struct JobDetailView: View {
             }
             if !stderrLog.isEmpty {
                 LogPreview(title: "표준 에러", text: stderrLog)
-            }
-        }
-    }
-
-    private var actionSection: some View {
-        section("작업") {
-            HStack {
-                Button("불러오기") { run("불러오기") { try Launchctl().bootstrap(plistURL: job.plistURL) } }
-                Button("내리기") { run("내리기") { try Launchctl().bootout(plistURL: job.plistURL) } }
-                Button("활성화") { run("활성화") { try Launchctl().enable(label: job.label) } }
-                Button("비활성화") { run("비활성화") { try Launchctl().disable(label: job.label) } }
-                Button("지금 실행") { runNow() }
-            }
-            .disabled(!canControl)
-
-            HStack {
-                Button("상태 새로고침") { refreshStatus() }
-                Button("원본 진단 보기") { showRawDiagnostic() }
             }
         }
     }
@@ -566,7 +547,9 @@ private struct JobDetailView: View {
             let loadedPlist = try LaunchPlist.read(from: job.plistURL)
             plist = loadedPlist
             editor = PlistEditorState(plist: loadedPlist)
-            loadLogPreviews(from: loadedPlist)
+            stdoutLog = ""
+            stderrLog = ""
+            refreshStatus()
         } catch {
             plist = nil
             editor = PlistEditorState()
@@ -611,7 +594,8 @@ private struct JobDetailView: View {
             try? FileManager.default.removeItem(at: tempURL)
             self.plist = updated
             editor = PlistEditorState(plist: updated)
-            loadLogPreviews(from: updated)
+            stdoutLog = ""
+            stderrLog = ""
             onInventoryChanged()
             errorText = "저장됨: plutil -lint 통과"
         } catch {
@@ -625,7 +609,6 @@ private struct JobDetailView: View {
             let result = try action()
             errorText = "\(name): 종료 코드 \(result.exitCode)"
             refreshStatus()
-            loadLogPreviews(from: plist)
         } catch {
             errorText = "\(name): \(error)"
         }
@@ -651,7 +634,6 @@ private struct JobDetailView: View {
             let kickstart = try launchctl.kickstart(label: job.label)
             errorText = "지금 실행: 종료 코드 \(kickstart.exitCode)"
             refreshStatus()
-            loadLogPreviews(from: plist)
         } catch {
             errorText = "지금 실행: \(error)"
         }
@@ -668,11 +650,6 @@ private struct JobDetailView: View {
         } catch {
             errorText = "원본 진단을 읽을 수 없습니다: \(error)"
         }
-    }
-
-    private func loadLogPreviews(from plist: LaunchPlist?) {
-        stdoutLog = logTail(path: plist?.standardOutPath)
-        stderrLog = logTail(path: plist?.standardErrorPath)
     }
 
     private func scrollToTop(_ proxy: ScrollViewProxy) {
@@ -812,76 +789,6 @@ private struct LogPreview: View {
         }
         .padding(10)
         .background(.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
-    }
-}
-
-private struct DecisionSummary {
-    let badge: String
-    let headline: String
-    let explanation: String
-    let nextAction: String
-    let impact: String
-    let evidence: String
-    let systemImage: String
-    let color: Color
-}
-
-private struct DecisionHero: View {
-    let summary: DecisionSummary
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label(summary.badge, systemImage: summary.systemImage)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(summary.color.opacity(0.18), in: Capsule())
-                    .foregroundStyle(summary.color)
-                Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(summary.headline)
-                    .font(.title3.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(summary.explanation)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-
-            HStack(alignment: .top, spacing: 18) {
-                DecisionFact(title: "다음 행동", value: summary.nextAction)
-                DecisionFact(title: "끄면", value: summary.impact)
-                DecisionFact(title: "근거", value: summary.evidence)
-            }
-        }
-        .padding(18)
-        .background(summary.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(summary.color.opacity(0.22), lineWidth: 1)
-        )
-    }
-}
-
-private struct DecisionFact: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1073,258 +980,6 @@ private func rowIconColor(for job: LaunchJobSummary) -> Color {
     return .secondary
 }
 
-private func decisionSummary(
-    for job: LaunchJobSummary,
-    plist: LaunchPlist?,
-    status: LaunchctlStatusSnapshot?
-) -> DecisionSummary {
-    let evidence = decisionEvidence(for: job, plist: plist, status: status)
-    let impact = serviceImpact(for: job, plist: plist)
-
-    if job.parseError != nil {
-        return DecisionSummary(
-            badge: "확인 필요",
-            headline: "\(friendlyServiceName(for: job)) plist를 읽지 못했습니다.",
-            explanation: "LaunchDeck이 이 항목의 실행 명령과 스케줄을 해석하지 못했습니다. 파일이 깨졌거나 launchd plist 형식이 아닐 수 있습니다.",
-            nextAction: "삭제보다 파일 형식과 소유 앱을 먼저 확인하세요.",
-            impact: "출처를 확인하지 않고 끄면 앱 기능이 갑자기 멈출 수 있습니다.",
-            evidence: evidence,
-            systemImage: "exclamationmark.triangle",
-            color: .orange
-        )
-    }
-
-    if !FileManager.default.fileExists(atPath: job.plistURL.path) {
-        return DecisionSummary(
-            badge: "정리 후보",
-            headline: "\(friendlyServiceName(for: job)) plist 파일이 없습니다.",
-            explanation: "목록에는 남아 있지만 실제 plist 파일을 찾을 수 없습니다. 예전 앱이나 자동화가 남긴 흔적일 가능성이 큽니다.",
-            nextAction: "경로를 확인한 뒤 남은 항목이면 정리하세요.",
-            impact: "대부분 영향이 없지만, 원본 파일이 다른 위치에 있는지는 확인이 필요합니다.",
-            evidence: evidence,
-            systemImage: "trash",
-            color: .red
-        )
-    }
-
-    if isAppleSystem(job) {
-        return DecisionSummary(
-            badge: "시스템 항목",
-            headline: "macOS가 관리하는 백그라운드 작업입니다.",
-            explanation: "사용자 자동화나 외부 앱 정리 대상이 아니라 시스템 기능의 일부로 보는 편이 맞습니다.",
-            nextAction: "문제를 특정하지 못했다면 유지하세요.",
-            impact: impact,
-            evidence: evidence,
-            systemImage: "lock",
-            color: .secondary
-        )
-    }
-
-    if let executable = executablePath(for: plist), executable.hasPrefix("/"),
-       !FileManager.default.fileExists(atPath: executable) {
-        return DecisionSummary(
-            badge: "정리 후보",
-            headline: "\(friendlyServiceName(for: job)) 실행 파일이 없습니다.",
-            explanation: "plist는 남아 있지만 실제 실행할 파일이 사라졌습니다. 앱 삭제 후 남은 LaunchAgent일 가능성이 큽니다.",
-            nextAction: "원본 앱을 지웠다면 비활성화하거나 정리하세요.",
-            impact: "이미 실행 파일이 없어서 정상 동작하지 않을 가능성이 큽니다.",
-            evidence: evidence,
-            systemImage: "trash",
-            color: .red
-        )
-    }
-
-    if isPersonalAutomation(job) {
-        return DecisionSummary(
-            badge: "내 자동화",
-            headline: "\(triggerSummary(for: plist))에 \(taskName(for: job, plist: plist)) 실행",
-            explanation: servicePurpose(for: job, plist: plist),
-            nextAction: "지금도 쓰는 자동화면 유지하고, 아니라면 비활성화 후보로 보세요.",
-            impact: impact,
-            evidence: evidence,
-            systemImage: "checkmark.circle",
-            color: .green
-        )
-    }
-
-    if serviceOwner(for: job) == "알 수 없음" {
-        return DecisionSummary(
-            badge: "확인 필요",
-            headline: "\(friendlyServiceName(for: job)) 출처가 명확하지 않습니다.",
-            explanation: "라벨과 실행 경로만으로는 어떤 앱이 등록했는지 확실하지 않습니다.",
-            nextAction: "실행 파일 경로와 로그를 먼저 확인하세요.",
-            impact: impact,
-            evidence: evidence,
-            systemImage: "questionmark.circle",
-            color: .orange
-        )
-    }
-
-    return DecisionSummary(
-        badge: serviceOwner(for: job),
-        headline: "\(serviceOwner(for: job)) 앱의 백그라운드 작업입니다.",
-        explanation: servicePurpose(for: job, plist: plist),
-        nextAction: "해당 앱을 쓰고 있으면 유지하고, 안 쓰면 비활성화 후보입니다.",
-        impact: impact,
-        evidence: evidence,
-        systemImage: "app.badge",
-        color: .blue
-    )
-}
-
-private func servicePurpose(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
-    let text = serviceText(job: job, plist: plist)
-
-    if job.isAppOwned {
-        return "사용자가 만든 LaunchDeck 자동화입니다."
-    }
-    if text.contains("cleanup-deps") {
-        return "cleanup-deps.sh를 정해진 시간에 실행하는 로컬 정리 자동화입니다."
-    }
-    if text.contains("mac-heartbeat") {
-        return "맥 상태를 주기적으로 기록하거나 살아있는지 확인하는 개인 자동화입니다."
-    }
-    if text.contains("voice-memos") {
-        return "음성 메모 파일을 감시하거나 후처리하는 개인 자동화입니다."
-    }
-    if job.domainName.hasPrefix("System") || job.label.hasPrefix("com.apple.") {
-        return "macOS 시스템 기능 또는 Apple 기본 백그라운드 작업입니다."
-    }
-    if text.contains("update") || text.contains("updater") || text.contains("keystone") {
-        return "앱 업데이트 확인 또는 설치 보조 작업입니다."
-    }
-    if text.contains("logi") || text.contains("logitech") {
-        return "Logitech 장치 설정, 버튼 매핑, 옵션 관리용 보조 작업으로 보입니다."
-    }
-    if text.contains("cloudflared") {
-        return "Cloudflare 터널 또는 네트워크 연결 유지 작업으로 보입니다."
-    }
-    if text.contains("watchman") {
-        return "파일 변경 감시용 개발 도구 작업으로 보입니다."
-    }
-    if plist?.startInterval != nil || plist?.startCalendarIntervals.isEmpty == false {
-        return "정해진 주기로 실행되는 예약 작업입니다."
-    }
-    if plist?.runAtLoad == true {
-        return "로그인 또는 로드 시 자동 실행되는 앱 보조 작업입니다."
-    }
-    return "앱이 필요할 때 호출하는 보조 프로세스일 가능성이 큽니다."
-}
-
-private func serviceNeed(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
-    let text = serviceText(job: job, plist: plist)
-
-    if text.contains("cleanup-deps") {
-        return "정리 스크립트를 잊지 않고 자동으로 돌리기 위해 필요합니다."
-    }
-    if text.contains("mac-heartbeat") {
-        return "상태 기록이나 자동화 감시 흐름을 계속 유지하려고 필요합니다."
-    }
-    if text.contains("voice-memos") {
-        return "새 음성 메모를 놓치지 않고 처리하려고 필요합니다."
-    }
-    if text.contains("keystone") || text.contains("googleupdater") {
-        return "Google 앱 업데이트를 백그라운드에서 처리하려고 필요합니다."
-    }
-    if text.contains("cloudflared") {
-        return "Cloudflare 터널이나 네트워크 연결을 계속 유지하려고 필요합니다."
-    }
-    if text.contains("watchman") {
-        return "개발 도구가 파일 변경을 빠르게 감지하려고 필요합니다."
-    }
-    if serviceOwner(for: job) == "Logitech" {
-        return "Logitech 장치 설정과 버튼 매핑을 유지하려고 필요합니다."
-    }
-    if isAppleSystem(job) {
-        return "macOS 기능 일부라 사용자가 직접 관리할 항목은 아닙니다."
-    }
-    if isPersonalAutomation(job) {
-        return "직접 만든 로컬 자동화 흐름을 유지하려고 필요합니다."
-    }
-    return "해당 앱이 로그인 후 보조 기능을 바로 쓰기 위해 등록한 항목입니다."
-}
-
-private func serviceImpact(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
-    let text = serviceText(job: job, plist: plist)
-
-    if text.contains("cleanup-deps") {
-        return "정리 스크립트가 자동으로 돌지 않습니다."
-    }
-    if text.contains("mac-heartbeat") {
-        return "맥 상태 기록이나 감시 흐름이 멈춥니다."
-    }
-    if text.contains("voice-memos") {
-        return "새 음성 메모 감시나 후처리가 자동으로 돌지 않습니다."
-    }
-    if text.contains("keystone") || text.contains("googleupdater") {
-        return "Google 앱 업데이트가 늦어질 수 있습니다."
-    }
-    if text.contains("cloudflared") {
-        return "Cloudflare 터널이나 네트워크 연결이 끊길 수 있습니다."
-    }
-    if text.contains("watchman") {
-        return "개발 도구의 파일 변경 감지가 느려지거나 실패할 수 있습니다."
-    }
-    if serviceOwner(for: job) == "Logitech" {
-        return "Logitech 장치 설정이나 버튼 매핑이 적용되지 않을 수 있습니다."
-    }
-    if isAppleSystem(job) {
-        return "macOS 기능 일부가 동작하지 않을 수 있습니다."
-    }
-    if isPersonalAutomation(job) {
-        return "직접 만든 자동화가 더 이상 자동 실행되지 않습니다."
-    }
-    return "소유 앱의 로그인 후 보조 기능이 동작하지 않을 수 있습니다."
-}
-
-private func serviceCheckItems(
-    for job: LaunchJobSummary,
-    plist: LaunchPlist?,
-    status: LaunchctlStatusSnapshot?
-) -> String {
-    let signals = cleanupSignals(for: job, plist: plist, status: status)
-    if signals != ["특이사항 없음"] {
-        return signals.joined(separator: "\n")
-    }
-    if isPersonalAutomation(job) {
-        return "스크립트 경로가 아직 맞는지, 로그가 최근에도 쌓이는지 확인하세요."
-    }
-    if isAppleSystem(job) {
-        return "보통 확인할 필요 없습니다. 문제가 있을 때만 로그를 봅니다."
-    }
-    return "이 앱을 지금도 쓰는지, 실행 파일 경로가 설치된 앱과 맞는지 확인하세요."
-}
-
-private func cleanupSignals(
-    for job: LaunchJobSummary,
-    plist: LaunchPlist?,
-    status: LaunchctlStatusSnapshot?
-) -> [String] {
-    var signals: [String] = []
-
-    if job.parseError != nil {
-        signals.append("plist 파싱 실패")
-    }
-    if !FileManager.default.fileExists(atPath: job.plistURL.path) {
-        signals.append("plist 파일 없음")
-    }
-    if let executable = executablePath(for: plist), executable.hasPrefix("/"),
-       !FileManager.default.fileExists(atPath: executable) {
-        signals.append("실행 파일 없음")
-    }
-    if job.label.contains(".proof.") || job.label.contains(".test.") {
-        signals.append("테스트/검증 항목처럼 보임")
-    }
-    if let lastExit = status?.lastExitStatus, lastExit != 0 {
-        signals.append("마지막 종료 코드 \(lastExit)")
-    }
-    if signals.isEmpty {
-        signals.append("특이사항 없음")
-    }
-
-    return signals
-}
-
 private func executablePath(for plist: LaunchPlist?) -> String? {
     plist?.program ?? plist?.programArguments.first
 }
@@ -1394,130 +1049,6 @@ private func logTail(path: String?) -> String {
     } catch {
         return "로그를 읽을 수 없습니다: \(error)"
     }
-}
-
-private func decisionEvidence(
-    for job: LaunchJobSummary,
-    plist: LaunchPlist?,
-    status: LaunchctlStatusSnapshot?
-) -> String {
-    var values = [
-        "\(koreanDomain(job.domainName))",
-        shortPath(job.plistURL.path),
-    ]
-
-    if plist != nil {
-        values.append(commandSummary(for: plist))
-        values.append(triggerSummary(for: plist))
-    }
-
-    if let status {
-        if let pid = status.runningPID {
-            values.append("현재 PID \(pid)")
-        } else {
-            values.append(status.loaded ? "로드됨" : "로드 안 됨")
-        }
-        if let lastExit = status.lastExitStatus {
-            values.append("마지막 종료 코드 \(lastExit)")
-        }
-    } else {
-        values.append("실행 상태는 새로고침 전")
-    }
-
-    return values.joined(separator: "\n")
-}
-
-private func commandSummary(for plist: LaunchPlist?) -> String {
-    guard let plist else {
-        return "명령을 읽을 수 없음"
-    }
-
-    let values: [String]
-    if !plist.programArguments.isEmpty {
-        values = plist.programArguments
-    } else if let program = plist.program {
-        values = [program]
-    } else {
-        values = []
-    }
-
-    if values.isEmpty {
-        return "명령 없음"
-    }
-
-    return values.map(shortPath).joined(separator: " ")
-}
-
-private func triggerSummary(for plist: LaunchPlist?) -> String {
-    guard let plist else {
-        return "스케줄 확인 전"
-    }
-
-    if let interval = plist.startInterval {
-        return "\(interval)초마다"
-    }
-    if plist.startCalendarIntervals.count == 1, let schedule = plist.startCalendarIntervals.first {
-        return calendarScheduleText(schedule)
-    }
-    if !plist.startCalendarIntervals.isEmpty {
-        return "\(plist.startCalendarIntervals.count)개 예약 시간"
-    }
-    if plist.runAtLoad {
-        return "로그인 또는 로드 시"
-    }
-    return "수동 요청 시"
-}
-
-private func taskName(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
-    let text = serviceText(job: job, plist: plist)
-
-    if text.contains("cleanup-deps") {
-        return "cleanup-deps.sh"
-    }
-    if text.contains("mac-heartbeat") {
-        return "mac-heartbeat"
-    }
-    if text.contains("voice-memos") {
-        return "voice-memos watcher"
-    }
-
-    let arguments = plist?.programArguments ?? job.programArguments
-    if let script = arguments.dropFirst().first(where: { $0.hasPrefix("/") || $0.contains(".sh") }) {
-        return URL(filePath: script).lastPathComponent
-    }
-    if let executable = executablePath(for: plist) ?? job.program ?? job.programArguments.first {
-        return URL(filePath: executable).lastPathComponent
-    }
-    return friendlyServiceName(for: job)
-}
-
-private func friendlyServiceName(for job: LaunchJobSummary) -> String {
-    let text = serviceText(job: job)
-
-    if text.contains("cleanup-deps") {
-        return "cleanup-deps"
-    }
-    if text.contains("mac-heartbeat") {
-        return "mac-heartbeat"
-    }
-    if text.contains("voice-memos") {
-        return "voice-memos watcher"
-    }
-    if text.contains("cloudflared") {
-        return "cloudflared"
-    }
-    if text.contains("watchman") {
-        return "watchman"
-    }
-    if text.contains("keystone") {
-        return "Google Keystone"
-    }
-
-    let parts = job.label.split(separator: ".").map(String.init)
-    if let last = parts.last, !last.isEmpty {
-        return last
-    }
-    return job.label
 }
 
 private func shortPath(_ value: String) -> String {
