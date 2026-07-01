@@ -12,10 +12,15 @@ struct LaunchDeckCLI {
                 let mode = domain.allowsWrites ? "writable" : "read-only"
                 print("\(domain.name)\t\(mode)\t\(domain.url.path)")
             }
+        case "inventory":
+            for job in LaunchInventoryService().inventory() {
+                let mode = job.isWritable ? "writable" : "read-only"
+                print("\(job.label)\t\(job.domainName)\t\(mode)\t\(job.plistURL.path)")
+            }
         case "version":
             print("\(LaunchDeck.appName) 0.1.0")
         default:
-            print("Usage: launchdeck <domains|version>")
+            print("Usage: launchdeck <domains|inventory|version>")
         }
     }
 }
