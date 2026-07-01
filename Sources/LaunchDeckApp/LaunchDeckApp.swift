@@ -4,48 +4,11 @@ import SwiftUI
 
 @main
 struct LaunchDeckApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
     var body: some Scene {
-        Settings {
-            EmptyView()
+        WindowGroup("LaunchDeck") {
+            LaunchDeckContentView()
         }
-    }
-}
-
-@MainActor
-private final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var window: NSWindow?
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        openMainWindow()
-        NSApplication.shared.activate(ignoringOtherApps: true)
-    }
-
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            openMainWindow()
-        }
-        return true
-    }
-
-    private func openMainWindow() {
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.center()
-        window.title = "LaunchDeck"
-        window.contentView = NSHostingView(rootView: LaunchDeckContentView())
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
+        .defaultSize(width: 1180, height: 720)
     }
 }
 
@@ -58,37 +21,82 @@ private struct LaunchDeckContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(jobs, selection: $selection) { job in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Image(systemName: job.isWritable && job.isAppOwned ? "checkmark.circle" : "lock")
-                            .foregroundStyle(job.isWritable && job.isAppOwned ? .green : .secondary)
-                        Text(job.label)
-                            .lineLimit(1)
+        HSplitView {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("LaunchDeck")
+                        .font(.title2.weight(.semibold))
+                    Spacer()
+                    Button {
+                        jobs = LaunchInventoryService().inventory()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
                     }
+                    .buttonStyle(.borderless)
+                    .help("새로고침")
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+
+                Divider()
+
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(jobs) { job in
+                            JobRow(job: job, isSelected: job.id == selection) {
+                                selection = job.id
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .frame(minWidth: 320, idealWidth: 360, maxWidth: 460)
+
+            Group {
+                if let job = selectedJob {
+                    JobDetailView(job: job)
+                        .id(job.id)
+                } else {
+                    ContentUnavailableView("항목을 선택하세요", systemImage: "list.bullet.rectangle")
+                }
+            }
+            .frame(minWidth: 640, maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(minWidth: 980, minHeight: 640)
+    }
+}
+
+private struct JobRow: View {
+    let job: LaunchJobSummary
+    let isSelected: Bool
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 10) {
+                Image(systemName: job.isWritable && job.isAppOwned ? "checkmark.circle" : "lock")
+                    .foregroundStyle(job.isWritable && job.isAppOwned ? .green : .secondary)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(job.label)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
                     Text(koreanDomain(job.domainName))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                .padding(.vertical, 4)
+
+                Spacer(minLength: 0)
             }
-            .navigationTitle("LaunchDeck")
-            .toolbar {
-                Button {
-                    jobs = LaunchInventoryService().inventory()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .help("새로고침")
-            }
-        } detail: {
-            if let job = selectedJob {
-                JobDetailView(job: job)
-            } else {
-                ContentUnavailableView("항목을 선택하세요", systemImage: "list.bullet.rectangle")
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .background(isSelected ? Color.accentColor.opacity(0.22) : Color.clear)
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -130,7 +138,10 @@ private struct JobDetailView: View {
             .padding(28)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task(id: job.id) {
+        .onAppear {
+            loadDetails()
+        }
+        .onChange(of: job.id) { _, _ in
             loadDetails()
         }
     }
@@ -145,9 +156,9 @@ private struct JobDetailView: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             HStack(spacing: 8) {
-                badge(koreanDomain(job.domainName))
-                badge(job.isAppOwned ? "LaunchDeck 관리 항목" : "외부 항목")
-                badge(canManage ? "쓰기 가능" : "읽기 전용")
+                tagPill(koreanDomain(job.domainName))
+                tagPill(job.isAppOwned ? "LaunchDeck 관리 항목" : "외부 항목")
+                tagPill(canManage ? "쓰기 가능" : "읽기 전용")
             }
         }
     }
@@ -155,11 +166,11 @@ private struct JobDetailView: View {
     private var statusSection: some View {
         section("상태") {
             InfoGrid(rows: [
-                ("plist 파일", status?.plistExists == true ? "있음" : "확인 안 됨"),
-                ("launchd 로드", status?.loaded == true ? "로드됨" : "로드 안 됨"),
-                ("실행 PID", status?.runningPID.map(String.init) ?? "실행 중 아님"),
-                ("비활성화", boolText(status?.disabled)),
-                ("마지막 종료 코드", status?.lastExitStatus.map(String.init) ?? "없음"),
+                ("plist 파일", plistExistsText),
+                ("launchd 로드", loadedText),
+                ("실행 PID", runningPIDText),
+                ("비활성화", disabledText),
+                ("마지막 종료 코드", lastExitStatusText),
             ])
         }
     }
@@ -215,7 +226,7 @@ private struct JobDetailView: View {
             .disabled(!canManage)
 
             HStack {
-                Button("상태 새로고침") { loadDetails() }
+                Button("상태 새로고침") { refreshStatus() }
                 Button("원본 진단 보기") { showRawDiagnostic() }
             }
         }
@@ -273,9 +284,50 @@ private struct JobDetailView: View {
         return "명시된 스케줄 없음"
     }
 
+    private var plistExistsText: String {
+        if let status {
+            return status.plistExists ? "있음" : "없음"
+        }
+
+        return FileManager.default.fileExists(atPath: job.plistURL.path) ? "있음" : "없음"
+    }
+
+    private var loadedText: String {
+        guard let status else {
+            return "상태 새로고침 전"
+        }
+
+        return status.loaded ? "로드됨" : "로드 안 됨"
+    }
+
+    private var runningPIDText: String {
+        guard let status else {
+            return "상태 새로고침 전"
+        }
+
+        return status.runningPID.map(String.init) ?? "실행 중 아님"
+    }
+
+    private var disabledText: String {
+        guard let status else {
+            return "상태 새로고침 전"
+        }
+
+        return boolText(status.disabled)
+    }
+
+    private var lastExitStatusText: String {
+        guard let status else {
+            return "상태 새로고침 전"
+        }
+
+        return status.lastExitStatus.map(String.init) ?? "없음"
+    }
+
     private func loadDetails() {
         errorText = ""
         rawDiagnostic = ""
+        status = nil
 
         do {
             plist = try LaunchPlist.read(from: job.plistURL)
@@ -283,9 +335,12 @@ private struct JobDetailView: View {
             plist = nil
             errorText = "plist를 읽을 수 없습니다: \(error)"
         }
+    }
 
+    private func refreshStatus() {
         do {
             status = try Launchctl().status(label: job.label, plistURL: job.plistURL)
+            rawDiagnostic = ""
         } catch {
             status = nil
             if errorText.isEmpty {
@@ -298,7 +353,7 @@ private struct JobDetailView: View {
         do {
             let result = try action()
             errorText = "\(name): 종료 코드 \(result.exitCode)"
-            loadDetails()
+            refreshStatus()
         } catch {
             errorText = "\(name): \(error)"
         }
@@ -377,7 +432,7 @@ private func notice(_ title: String, _ body: String) -> some View {
     .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 }
 
-private func badge(_ text: String) -> some View {
+private func tagPill(_ text: String) -> some View {
     Text(text)
         .font(.caption)
         .padding(.horizontal, 10)

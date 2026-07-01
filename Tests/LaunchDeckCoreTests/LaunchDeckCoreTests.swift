@@ -63,6 +63,28 @@ final class LaunchDeckCoreTests: XCTestCase {
         XCTAssertEqual(inventory.last?.programArguments, ["/bin/echo", "user"])
     }
 
+    func testInventoryUsesUniqueIDsWhenLabelsRepeatAcrossDomains() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let userDirectory = root.appending(path: "user", directoryHint: .isDirectory)
+        let systemDirectory = root.appending(path: "system", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: userDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: systemDirectory, withIntermediateDirectories: true)
+
+        let plist = LaunchPlist(label: "com.example.duplicate", programArguments: ["/bin/echo", "same"])
+        try plist.writeXML(to: userDirectory.appending(path: "user.plist"))
+        try plist.writeXML(to: systemDirectory.appending(path: "system.plist"))
+
+        let inventory = LaunchInventoryService(domains: [
+            .userAgents(userDirectory),
+            .systemDaemons(systemDirectory),
+        ]).inventory()
+
+        XCTAssertEqual(inventory.map(\.label), ["com.example.duplicate", "com.example.duplicate"])
+        XCTAssertEqual(Set(inventory.map(\.id)).count, 2)
+    }
+
     func testLaunchctlUsesGuiDomainSafeArgv() throws {
         var calls: [[String]] = []
         let runner = CommandRunner { executable, arguments in

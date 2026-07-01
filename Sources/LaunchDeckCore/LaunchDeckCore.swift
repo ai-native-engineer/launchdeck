@@ -104,7 +104,7 @@ public enum LaunchDomain: Equatable, Sendable {
 }
 
 public struct LaunchJobSummary: Equatable, Identifiable, Sendable {
-    public var id: String { label }
+    public var id: String { plistURL.path }
 
     public let label: String
     public let plistURL: URL
