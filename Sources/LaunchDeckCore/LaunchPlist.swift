@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CalendarSchedule: Equatable, Sendable {
+public struct CalendarSchedule: Codable, Equatable, Sendable {
     public let minute: Int?
     public let hour: Int?
     public let day: Int?

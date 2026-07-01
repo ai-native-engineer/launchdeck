@@ -96,6 +96,95 @@ final class LaunchDeckCoreTests: XCTestCase {
         XCTAssertThrowsError(try Launchctl(uid: 501).serviceTarget(for: "bad/label"))
     }
 
+    func testManagedTaskTemplatesRoundTripThroughStore() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let paths = LaunchDeckPaths(home: root)
+        let store = ManagedTaskStore(paths: paths)
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let oneShot = try ManagedTaskTemplate.oneShot(
+            id: "one",
+            title: "One Shot",
+            programArguments: ["/bin/echo", "once"],
+            runAt: date,
+            paths: paths,
+            environmentVariables: ["PATH": "/usr/bin:/bin"],
+            timeoutSeconds: 20
+        )
+        let calendar = try ManagedTaskTemplate.calendar(
+            id: "calendar",
+            title: "Calendar",
+            programArguments: ["/bin/echo", "calendar"],
+            schedules: [CalendarSchedule(minute: 15, hour: 9)],
+            paths: paths
+        )
+        let interval = try ManagedTaskTemplate.interval(
+            id: "interval",
+            title: "Interval",
+            programArguments: ["/bin/echo", "interval"],
+            everySeconds: 300,
+            paths: paths
+        )
+
+        try store.save(oneShot)
+        try store.save(calendar)
+        try store.save(interval)
+
+        XCTAssertEqual(try store.load(id: "one"), oneShot)
+        XCTAssertEqual(try store.list().map(\.id), ["calendar", "interval", "one"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.logDirectory.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.metadataURL(for: "interval").path))
+
+        let oneShotPlist = try oneShot.launchPlist()
+        XCTAssertEqual(oneShotPlist.environmentVariables["PATH"], "/usr/bin:/bin")
+        XCTAssertEqual(oneShotPlist.timeOut, 20)
+        XCTAssertEqual(oneShotPlist.standardOutPath, paths.stdoutPath(taskID: "one"))
+        XCTAssertEqual(oneShotPlist.standardErrorPath, paths.stderrPath(taskID: "one"))
+        XCTAssertEqual(oneShotPlist.startCalendarIntervals.count, 1)
+        XCTAssertTrue(oneShotPlist.launchOnlyOnce)
+
+        let intervalPlist = try interval.launchPlist()
+        XCTAssertEqual(intervalPlist.startInterval, 300)
+    }
+
+    func testManagedTaskGeneratedLaunchAgentPlistLints() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let paths = LaunchDeckPaths(home: root)
+        let task = try ManagedTaskTemplate.interval(
+            id: "lint",
+            title: "Lint",
+            programArguments: ["/bin/echo", "lint"],
+            everySeconds: 60,
+            paths: paths,
+            workingDirectory: "/tmp",
+            environmentVariables: ["PATH": "/usr/bin:/bin"],
+            timeoutSeconds: 10
+        )
+        let plistURL = try LaunchAgentPlistStore(home: root).write(try task.launchPlist())
+
+        XCTAssertTrue(try PlistLinter().lint(plistURL).succeeded)
+    }
+
+    func testOneShotTasksMustDisableOrCleanupToAvoidYearlyCalendarRepeats() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let task = try ManagedTaskTemplate.oneShot(
+            id: "unsafe",
+            title: "Unsafe",
+            programArguments: ["/bin/echo", "unsafe"],
+            runAt: Date(timeIntervalSince1970: 1_800_000_000),
+            paths: LaunchDeckPaths(home: root),
+            afterRunPolicy: .keep
+        )
+
+        XCTAssertThrowsError(try task.launchPlist())
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "LaunchDeckTests-\(UUID().uuidString)", directoryHint: .isDirectory)

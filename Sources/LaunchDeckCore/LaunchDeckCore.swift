@@ -9,6 +9,7 @@ public enum LaunchDeckError: Error, CustomStringConvertible, LocalizedError {
     case invalidLabel(String)
     case nonAppOwnedLabel(String)
     case missingExecutable(String)
+    case invalidSchedule(String)
     case unsafePath(URL)
     case invalidPlist(URL)
 
@@ -20,6 +21,8 @@ public enum LaunchDeckError: Error, CustomStringConvertible, LocalizedError {
             "Label is not app-owned: \(label)"
         case let .missingExecutable(label):
             "LaunchAgent has neither Program nor ProgramArguments: \(label)"
+        case let .invalidSchedule(message):
+            "Invalid schedule: \(message)"
         case let .unsafePath(url):
             "Path is outside LaunchDeck-owned locations: \(url.path)"
         case let .invalidPlist(url):
