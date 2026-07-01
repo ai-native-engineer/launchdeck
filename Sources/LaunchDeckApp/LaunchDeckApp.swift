@@ -43,12 +43,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.center()
         window.title = "LaunchDeck"
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: LaunchDeckContentView())
+        placeOnMainScreen(window)
         window.makeKeyAndOrderFront(nil)
         self.window = window
+    }
+
+    private func placeOnMainScreen(_ window: NSWindow) {
+        guard let frame = NSScreen.main?.visibleFrame else {
+            window.center()
+            return
+        }
+
+        let size = NSSize(width: min(1180, frame.width - 80), height: min(720, frame.height - 80))
+        let origin = NSPoint(
+            x: frame.midX - size.width / 2,
+            y: frame.midY - size.height / 2
+        )
+        window.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 }
 
@@ -56,6 +70,7 @@ private struct LaunchDeckContentView: View {
     @State private var jobs = LaunchInventoryService().inventory()
     @State private var selection: String?
     @State private var searchText = ""
+    @State private var filter = JobFilter.attention
 
     private var selectedJob: LaunchJobSummary? {
         jobs.first { $0.id == selection }
@@ -63,22 +78,9 @@ private struct LaunchDeckContentView: View {
 
     private var visibleJobs: [LaunchJobSummary] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else {
-            return jobs
-        }
 
         return jobs.filter { job in
-            [
-                job.label,
-                job.plistURL.path,
-                job.domainName,
-                serviceOwner(for: job),
-                job.program ?? "",
-                job.programArguments.joined(separator: " "),
-            ]
-            .joined(separator: " ")
-            .lowercased()
-            .contains(query)
+            matches(filter, job: job) && (query.isEmpty || matchesSearch(query, job: job))
         }
     }
 
@@ -105,17 +107,26 @@ private struct LaunchDeckContentView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 10)
 
+                FilterTabs(filter: $filter, jobs: jobs)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+
                 Divider()
 
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(visibleJobs) { job in
-                            JobRow(job: job, isSelected: job.id == selection) {
-                                selection = job.id
+                    if visibleJobs.isEmpty {
+                        ContentUnavailableView("표시할 항목 없음", systemImage: "tray")
+                            .padding(.top, 60)
+                    } else {
+                        LazyVStack(spacing: 0) {
+                            ForEach(visibleJobs) { job in
+                                JobRow(job: job, isSelected: job.id == selection) {
+                                    selection = job.id
+                                }
                             }
                         }
+                        .padding(.vertical, 8)
                     }
-                    .padding(.vertical, 8)
                 }
             }
             .frame(minWidth: 320, idealWidth: 360, maxWidth: 460)
@@ -131,6 +142,85 @@ private struct LaunchDeckContentView: View {
             .frame(minWidth: 640, maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 980, minHeight: 640)
+        .onAppear {
+            ensureSelection()
+        }
+        .onChange(of: filter) { _, _ in
+            ensureSelection()
+        }
+        .onChange(of: searchText) { _, _ in
+            ensureSelection()
+        }
+        .onChange(of: jobs) { _, _ in
+            ensureSelection()
+        }
+    }
+
+    private func ensureSelection() {
+        if let selection, visibleJobs.contains(where: { $0.id == selection }) {
+            return
+        }
+
+        selection = visibleJobs.first?.id
+    }
+}
+
+private enum JobFilter: String, CaseIterable, Identifiable {
+    case attention
+    case mine
+    case external
+    case apple
+    case all
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .attention:
+            "주의 필요"
+        case .mine:
+            "내 자동화"
+        case .external:
+            "외부 앱"
+        case .apple:
+            "Apple 시스템"
+        case .all:
+            "전체"
+        }
+    }
+}
+
+private struct FilterTabs: View {
+    @Binding var filter: JobFilter
+    let jobs: [LaunchJobSummary]
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8),
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 8) {
+            ForEach(JobFilter.allCases) { item in
+                Button {
+                    filter = item
+                } label: {
+                    HStack {
+                        Text(item.title)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(jobs.filter { matches(item, job: $0) }.count)")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(filter == item ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }
 
@@ -142,8 +232,8 @@ private struct JobRow: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 10) {
-                Image(systemName: job.isWritable && job.isAppOwned ? "checkmark.circle" : "lock")
-                    .foregroundStyle(job.isWritable && job.isAppOwned ? .green : .secondary)
+                Image(systemName: rowIconName(for: job))
+                    .foregroundStyle(rowIconColor(for: job))
                     .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -180,37 +270,46 @@ private struct JobDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear
+                    .frame(height: 0)
+                    .id("detail-top")
 
-                if !canManage {
-                    notice("읽기 전용", "LaunchDeck이 만든 사용자 LaunchAgent만 불러오기, 내리기, 실행, 활성화, 비활성화를 허용합니다.")
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    decisionHero
+
+                    if !canManage {
+                        notice("읽기 전용", "LaunchDeck이 만든 사용자 LaunchAgent만 불러오기, 내리기, 실행, 활성화, 비활성화를 허용합니다.")
+                    }
+
+                    contextSection
+                    statusSection
+                    commandSection
+                    scheduleSection
+                    logSection
+                    actionSection
+
+                    if !rawDiagnostic.isEmpty {
+                        textSection("원본 진단", rawDiagnostic)
+                    }
+
+                    if !errorText.isEmpty {
+                        notice("오류", errorText)
+                    }
                 }
-
-                insightSection
-                statusSection
-                commandSection
-                scheduleSection
-                logSection
-                actionSection
-
-                if !rawDiagnostic.isEmpty {
-                    textSection("원본 진단", rawDiagnostic)
-                }
-
-                if !errorText.isEmpty {
-                    notice("오류", errorText)
-                }
+                .padding(28)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(28)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .onAppear {
-            loadDetails()
-        }
-        .onChange(of: job.id) { _, _ in
-            loadDetails()
+            .onAppear {
+                loadDetails()
+                scrollToTop(proxy)
+            }
+            .onChange(of: job.id) { _, _ in
+                loadDetails()
+                scrollToTop(proxy)
+            }
         }
     }
 
@@ -225,19 +324,23 @@ private struct JobDetailView: View {
                 .textSelection(.enabled)
             HStack(spacing: 8) {
                 tagPill(koreanDomain(job.domainName))
-                tagPill(job.isAppOwned ? "LaunchDeck 관리 항목" : "외부 항목")
+                tagPill(ownershipTag(for: job))
                 tagPill(canManage ? "쓰기 가능" : "읽기 전용")
             }
         }
     }
 
-    private var insightSection: some View {
-        section("판단") {
+    private var decisionHero: some View {
+        DecisionHero(summary: decisionSummary(for: job, plist: plist, status: status))
+    }
+
+    private var contextSection: some View {
+        section("질문별 해석") {
             InfoGrid(rows: [
-                ("소속 추정", serviceOwner(for: job)),
-                ("역할 추정", servicePurpose(for: job, plist: plist)),
-                ("정리 판단", serviceRecommendation(for: job, plist: plist, status: status)),
-                ("주의 신호", cleanupSignals(for: job, plist: plist, status: status).joined(separator: "\n")),
+                ("이게 뭐냐", servicePurpose(for: job, plist: plist)),
+                ("왜 켜져 있나", serviceNeed(for: job, plist: plist)),
+                ("끄면", serviceImpact(for: job, plist: plist)),
+                ("확인할 것", serviceCheckItems(for: job, plist: plist, status: status)),
             ])
         }
     }
@@ -358,7 +461,7 @@ private struct JobDetailView: View {
             return "\(interval)초마다 실행"
         }
         if !plist.startCalendarIntervals.isEmpty {
-            return plist.startCalendarIntervals.map(describe).joined(separator: "\n")
+            return plist.startCalendarIntervals.map(calendarScheduleText).joined(separator: "\n")
         }
         return "명시된 스케줄 없음"
     }
@@ -451,6 +554,12 @@ private struct JobDetailView: View {
         }
     }
 
+    private func scrollToTop(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            proxy.scrollTo("detail-top", anchor: .top)
+        }
+    }
+
     private func openPath(_ path: String?) {
         guard let path else {
             return
@@ -476,6 +585,76 @@ private struct InfoGrid: View {
             }
         }
         .font(.callout)
+    }
+}
+
+private struct DecisionSummary {
+    let badge: String
+    let headline: String
+    let explanation: String
+    let nextAction: String
+    let impact: String
+    let evidence: String
+    let systemImage: String
+    let color: Color
+}
+
+private struct DecisionHero: View {
+    let summary: DecisionSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label(summary.badge, systemImage: summary.systemImage)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(summary.color.opacity(0.18), in: Capsule())
+                    .foregroundStyle(summary.color)
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(summary.headline)
+                    .font(.title3.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(summary.explanation)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            HStack(alignment: .top, spacing: 18) {
+                DecisionFact(title: "다음 행동", value: summary.nextAction)
+                DecisionFact(title: "끄면", value: summary.impact)
+                DecisionFact(title: "근거", value: summary.evidence)
+            }
+        }
+        .padding(18)
+        .background(summary.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(summary.color.opacity(0.22), lineWidth: 1)
+        )
+    }
+}
+
+private struct DecisionFact: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -519,11 +698,27 @@ private func tagPill(_ text: String) -> some View {
         .background(.tertiary.opacity(0.5), in: Capsule())
 }
 
+private func ownershipTag(for job: LaunchJobSummary) -> String {
+    if job.isAppOwned {
+        return "LaunchDeck 관리 항목"
+    }
+    if isAppleSystem(job) {
+        return "Apple 시스템"
+    }
+    if isPersonalAutomation(job) {
+        return "내 자동화"
+    }
+    return "외부 항목"
+}
+
 private func serviceOwner(for job: LaunchJobSummary) -> String {
     let text = serviceText(job: job)
 
     if job.isAppOwned {
         return "LaunchDeck"
+    }
+    if isPersonalAutomation(job) {
+        return "내 자동화"
     }
     if job.label.hasPrefix("com.apple.") {
         return "Apple"
@@ -552,11 +747,218 @@ private func serviceOwner(for job: LaunchJobSummary) -> String {
     return "알 수 없음"
 }
 
+private func matches(_ filter: JobFilter, job: LaunchJobSummary) -> Bool {
+    switch filter {
+    case .attention:
+        needsAttention(job)
+    case .mine:
+        isPersonalAutomation(job)
+    case .external:
+        isExternalApp(job)
+    case .apple:
+        isAppleSystem(job)
+    case .all:
+        true
+    }
+}
+
+private func matchesSearch(_ query: String, job: LaunchJobSummary) -> Bool {
+    [
+        job.label,
+        job.plistURL.path,
+        job.domainName,
+        serviceOwner(for: job),
+        job.program ?? "",
+        job.programArguments.joined(separator: " "),
+    ]
+    .joined(separator: " ")
+    .lowercased()
+    .contains(query)
+}
+
+private func needsAttention(_ job: LaunchJobSummary) -> Bool {
+    if isAppleSystem(job) {
+        return false
+    }
+    if job.parseError != nil || !FileManager.default.fileExists(atPath: job.plistURL.path) {
+        return true
+    }
+    if missingExecutable(for: job) {
+        return true
+    }
+    if job.label.contains(".proof.") || job.label.contains(".test.") {
+        return true
+    }
+    return isExternalApp(job) && serviceOwner(for: job) == "알 수 없음"
+}
+
+private func isPersonalAutomation(_ job: LaunchJobSummary) -> Bool {
+    let text = [
+        job.label,
+        job.program ?? "",
+        job.programArguments.joined(separator: " "),
+    ]
+    .joined(separator: " ")
+    .lowercased()
+
+    return job.isAppOwned ||
+        job.label.hasPrefix("com.seungwonan.") ||
+        text.contains("/.agents/") ||
+        text.contains("/.local/bin/") ||
+        text.contains("voice-memos")
+}
+
+private func isAppleSystem(_ job: LaunchJobSummary) -> Bool {
+    job.label.hasPrefix("com.apple.") || job.domainName.hasPrefix("System")
+}
+
+private func isExternalApp(_ job: LaunchJobSummary) -> Bool {
+    !isAppleSystem(job) && !isPersonalAutomation(job)
+}
+
+private func missingExecutable(for job: LaunchJobSummary) -> Bool {
+    guard let executable = job.program ?? job.programArguments.first,
+          executable.hasPrefix("/")
+    else {
+        return false
+    }
+
+    return !FileManager.default.fileExists(atPath: executable)
+}
+
+private func rowIconName(for job: LaunchJobSummary) -> String {
+    if needsAttention(job) {
+        return "exclamationmark.triangle"
+    }
+    if isPersonalAutomation(job) {
+        return "checkmark.circle"
+    }
+    return "lock"
+}
+
+private func rowIconColor(for job: LaunchJobSummary) -> Color {
+    if needsAttention(job) {
+        return .orange
+    }
+    if isPersonalAutomation(job) {
+        return .green
+    }
+    return .secondary
+}
+
+private func decisionSummary(
+    for job: LaunchJobSummary,
+    plist: LaunchPlist?,
+    status: LaunchctlStatusSnapshot?
+) -> DecisionSummary {
+    let evidence = decisionEvidence(for: job, plist: plist, status: status)
+    let impact = serviceImpact(for: job, plist: plist)
+
+    if job.parseError != nil {
+        return DecisionSummary(
+            badge: "확인 필요",
+            headline: "\(friendlyServiceName(for: job)) plist를 읽지 못했습니다.",
+            explanation: "LaunchDeck이 이 항목의 실행 명령과 스케줄을 해석하지 못했습니다. 파일이 깨졌거나 launchd plist 형식이 아닐 수 있습니다.",
+            nextAction: "삭제보다 파일 형식과 소유 앱을 먼저 확인하세요.",
+            impact: "출처를 확인하지 않고 끄면 앱 기능이 갑자기 멈출 수 있습니다.",
+            evidence: evidence,
+            systemImage: "exclamationmark.triangle",
+            color: .orange
+        )
+    }
+
+    if !FileManager.default.fileExists(atPath: job.plistURL.path) {
+        return DecisionSummary(
+            badge: "정리 후보",
+            headline: "\(friendlyServiceName(for: job)) plist 파일이 없습니다.",
+            explanation: "목록에는 남아 있지만 실제 plist 파일을 찾을 수 없습니다. 예전 앱이나 자동화가 남긴 흔적일 가능성이 큽니다.",
+            nextAction: "경로를 확인한 뒤 남은 항목이면 정리하세요.",
+            impact: "대부분 영향이 없지만, 원본 파일이 다른 위치에 있는지는 확인이 필요합니다.",
+            evidence: evidence,
+            systemImage: "trash",
+            color: .red
+        )
+    }
+
+    if isAppleSystem(job) {
+        return DecisionSummary(
+            badge: "시스템 항목",
+            headline: "macOS가 관리하는 백그라운드 작업입니다.",
+            explanation: "사용자 자동화나 외부 앱 정리 대상이 아니라 시스템 기능의 일부로 보는 편이 맞습니다.",
+            nextAction: "문제를 특정하지 못했다면 유지하세요.",
+            impact: impact,
+            evidence: evidence,
+            systemImage: "lock",
+            color: .secondary
+        )
+    }
+
+    if let executable = executablePath(for: plist), executable.hasPrefix("/"),
+       !FileManager.default.fileExists(atPath: executable) {
+        return DecisionSummary(
+            badge: "정리 후보",
+            headline: "\(friendlyServiceName(for: job)) 실행 파일이 없습니다.",
+            explanation: "plist는 남아 있지만 실제 실행할 파일이 사라졌습니다. 앱 삭제 후 남은 LaunchAgent일 가능성이 큽니다.",
+            nextAction: "원본 앱을 지웠다면 비활성화하거나 정리하세요.",
+            impact: "이미 실행 파일이 없어서 정상 동작하지 않을 가능성이 큽니다.",
+            evidence: evidence,
+            systemImage: "trash",
+            color: .red
+        )
+    }
+
+    if isPersonalAutomation(job) {
+        return DecisionSummary(
+            badge: "내 자동화",
+            headline: "\(triggerSummary(for: plist))에 \(taskName(for: job, plist: plist)) 실행",
+            explanation: servicePurpose(for: job, plist: plist),
+            nextAction: "지금도 쓰는 자동화면 유지하고, 아니라면 비활성화 후보로 보세요.",
+            impact: impact,
+            evidence: evidence,
+            systemImage: "checkmark.circle",
+            color: .green
+        )
+    }
+
+    if serviceOwner(for: job) == "알 수 없음" {
+        return DecisionSummary(
+            badge: "확인 필요",
+            headline: "\(friendlyServiceName(for: job)) 출처가 명확하지 않습니다.",
+            explanation: "라벨과 실행 경로만으로는 어떤 앱이 등록했는지 확실하지 않습니다.",
+            nextAction: "실행 파일 경로와 로그를 먼저 확인하세요.",
+            impact: impact,
+            evidence: evidence,
+            systemImage: "questionmark.circle",
+            color: .orange
+        )
+    }
+
+    return DecisionSummary(
+        badge: serviceOwner(for: job),
+        headline: "\(serviceOwner(for: job)) 앱의 백그라운드 작업입니다.",
+        explanation: servicePurpose(for: job, plist: plist),
+        nextAction: "해당 앱을 쓰고 있으면 유지하고, 안 쓰면 비활성화 후보입니다.",
+        impact: impact,
+        evidence: evidence,
+        systemImage: "app.badge",
+        color: .blue
+    )
+}
+
 private func servicePurpose(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
     let text = serviceText(job: job, plist: plist)
 
     if job.isAppOwned {
         return "사용자가 만든 LaunchDeck 자동화입니다."
+    }
+    if text.contains("cleanup-deps") {
+        return "cleanup-deps.sh를 정해진 시간에 실행하는 로컬 정리 자동화입니다."
+    }
+    if text.contains("mac-heartbeat") {
+        return "맥 상태를 주기적으로 기록하거나 살아있는지 확인하는 개인 자동화입니다."
+    }
+    if text.contains("voice-memos") {
+        return "음성 메모 파일을 감시하거나 후처리하는 개인 자동화입니다."
     }
     if job.domainName.hasPrefix("System") || job.label.hasPrefix("com.apple.") {
         return "macOS 시스템 기능 또는 Apple 기본 백그라운드 작업입니다."
@@ -582,34 +984,88 @@ private func servicePurpose(for job: LaunchJobSummary, plist: LaunchPlist?) -> S
     return "앱이 필요할 때 호출하는 보조 프로세스일 가능성이 큽니다."
 }
 
-private func serviceRecommendation(
+private func serviceNeed(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
+    let text = serviceText(job: job, plist: plist)
+
+    if text.contains("cleanup-deps") {
+        return "정리 스크립트를 잊지 않고 자동으로 돌리기 위해 필요합니다."
+    }
+    if text.contains("mac-heartbeat") {
+        return "상태 기록이나 자동화 감시 흐름을 계속 유지하려고 필요합니다."
+    }
+    if text.contains("voice-memos") {
+        return "새 음성 메모를 놓치지 않고 처리하려고 필요합니다."
+    }
+    if text.contains("keystone") || text.contains("googleupdater") {
+        return "Google 앱 업데이트를 백그라운드에서 처리하려고 필요합니다."
+    }
+    if text.contains("cloudflared") {
+        return "Cloudflare 터널이나 네트워크 연결을 계속 유지하려고 필요합니다."
+    }
+    if text.contains("watchman") {
+        return "개발 도구가 파일 변경을 빠르게 감지하려고 필요합니다."
+    }
+    if serviceOwner(for: job) == "Logitech" {
+        return "Logitech 장치 설정과 버튼 매핑을 유지하려고 필요합니다."
+    }
+    if isAppleSystem(job) {
+        return "macOS 기능 일부라 사용자가 직접 관리할 항목은 아닙니다."
+    }
+    if isPersonalAutomation(job) {
+        return "직접 만든 로컬 자동화 흐름을 유지하려고 필요합니다."
+    }
+    return "해당 앱이 로그인 후 보조 기능을 바로 쓰기 위해 등록한 항목입니다."
+}
+
+private func serviceImpact(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
+    let text = serviceText(job: job, plist: plist)
+
+    if text.contains("cleanup-deps") {
+        return "정리 스크립트가 자동으로 돌지 않습니다."
+    }
+    if text.contains("mac-heartbeat") {
+        return "맥 상태 기록이나 감시 흐름이 멈춥니다."
+    }
+    if text.contains("voice-memos") {
+        return "새 음성 메모 감시나 후처리가 자동으로 돌지 않습니다."
+    }
+    if text.contains("keystone") || text.contains("googleupdater") {
+        return "Google 앱 업데이트가 늦어질 수 있습니다."
+    }
+    if text.contains("cloudflared") {
+        return "Cloudflare 터널이나 네트워크 연결이 끊길 수 있습니다."
+    }
+    if text.contains("watchman") {
+        return "개발 도구의 파일 변경 감지가 느려지거나 실패할 수 있습니다."
+    }
+    if serviceOwner(for: job) == "Logitech" {
+        return "Logitech 장치 설정이나 버튼 매핑이 적용되지 않을 수 있습니다."
+    }
+    if isAppleSystem(job) {
+        return "macOS 기능 일부가 동작하지 않을 수 있습니다."
+    }
+    if isPersonalAutomation(job) {
+        return "직접 만든 자동화가 더 이상 자동 실행되지 않습니다."
+    }
+    return "소유 앱의 로그인 후 보조 기능이 동작하지 않을 수 있습니다."
+}
+
+private func serviceCheckItems(
     for job: LaunchJobSummary,
     plist: LaunchPlist?,
     status: LaunchctlStatusSnapshot?
 ) -> String {
-    if job.parseError != nil {
-        return "plist를 읽지 못했습니다. 삭제보다 파일 형식과 소유 앱을 먼저 확인하세요."
+    let signals = cleanupSignals(for: job, plist: plist, status: status)
+    if signals != ["특이사항 없음"] {
+        return signals.joined(separator: "\n")
     }
-    if !FileManager.default.fileExists(atPath: job.plistURL.path) {
-        return "plist 파일이 없습니다. 정리 후보입니다."
+    if isPersonalAutomation(job) {
+        return "스크립트 경로가 아직 맞는지, 로그가 최근에도 쌓이는지 확인하세요."
     }
-    if let executable = executablePath(for: plist), executable.hasPrefix("/"),
-       !FileManager.default.fileExists(atPath: executable) {
-        return "실행 파일이 없습니다. 앱 삭제 후 남은 항목일 가능성이 있어 정리 후보입니다."
+    if isAppleSystem(job) {
+        return "보통 확인할 필요 없습니다. 문제가 있을 때만 로그를 봅니다."
     }
-    if job.domainName.hasPrefix("System") || job.label.hasPrefix("com.apple.") {
-        return "시스템 항목입니다. 문제를 특정하지 못했다면 끄지 않는 편이 맞습니다."
-    }
-    if job.isAppOwned {
-        return "내 자동화입니다. 더 이상 쓰지 않으면 LaunchDeck에서 정리해도 됩니다."
-    }
-    if let lastExit = status?.lastExitStatus, lastExit != 0 {
-        return "최근 종료 코드가 0이 아닙니다. 로그를 먼저 확인하세요."
-    }
-    if serviceOwner(for: job) == "알 수 없음" {
-        return "출처가 불명확합니다. 실행 파일 경로와 로그를 확인한 뒤 판단하세요."
-    }
-    return "해당 앱을 쓰고 있다면 유지, 안 쓰면 비활성화 후보입니다."
+    return "이 앱을 지금도 쓰는지, 실행 파일 경로가 설치된 앱과 맞는지 확인하세요."
 }
 
 private func cleanupSignals(
@@ -646,6 +1102,138 @@ private func executablePath(for plist: LaunchPlist?) -> String? {
     plist?.program ?? plist?.programArguments.first
 }
 
+private func decisionEvidence(
+    for job: LaunchJobSummary,
+    plist: LaunchPlist?,
+    status: LaunchctlStatusSnapshot?
+) -> String {
+    var values = [
+        "\(koreanDomain(job.domainName))",
+        shortPath(job.plistURL.path),
+    ]
+
+    if plist != nil {
+        values.append(commandSummary(for: plist))
+        values.append(triggerSummary(for: plist))
+    }
+
+    if let status {
+        if let pid = status.runningPID {
+            values.append("현재 PID \(pid)")
+        } else {
+            values.append(status.loaded ? "로드됨" : "로드 안 됨")
+        }
+        if let lastExit = status.lastExitStatus {
+            values.append("마지막 종료 코드 \(lastExit)")
+        }
+    } else {
+        values.append("실행 상태는 새로고침 전")
+    }
+
+    return values.joined(separator: "\n")
+}
+
+private func commandSummary(for plist: LaunchPlist?) -> String {
+    guard let plist else {
+        return "명령을 읽을 수 없음"
+    }
+
+    let values: [String]
+    if !plist.programArguments.isEmpty {
+        values = plist.programArguments
+    } else if let program = plist.program {
+        values = [program]
+    } else {
+        values = []
+    }
+
+    if values.isEmpty {
+        return "명령 없음"
+    }
+
+    return values.map(shortPath).joined(separator: " ")
+}
+
+private func triggerSummary(for plist: LaunchPlist?) -> String {
+    guard let plist else {
+        return "스케줄 확인 전"
+    }
+
+    if let interval = plist.startInterval {
+        return "\(interval)초마다"
+    }
+    if plist.startCalendarIntervals.count == 1, let schedule = plist.startCalendarIntervals.first {
+        return calendarScheduleText(schedule)
+    }
+    if !plist.startCalendarIntervals.isEmpty {
+        return "\(plist.startCalendarIntervals.count)개 예약 시간"
+    }
+    if plist.runAtLoad {
+        return "로그인 또는 로드 시"
+    }
+    return "수동 요청 시"
+}
+
+private func taskName(for job: LaunchJobSummary, plist: LaunchPlist?) -> String {
+    let text = serviceText(job: job, plist: plist)
+
+    if text.contains("cleanup-deps") {
+        return "cleanup-deps.sh"
+    }
+    if text.contains("mac-heartbeat") {
+        return "mac-heartbeat"
+    }
+    if text.contains("voice-memos") {
+        return "voice-memos watcher"
+    }
+
+    let arguments = plist?.programArguments ?? job.programArguments
+    if let script = arguments.dropFirst().first(where: { $0.hasPrefix("/") || $0.contains(".sh") }) {
+        return URL(filePath: script).lastPathComponent
+    }
+    if let executable = executablePath(for: plist) ?? job.program ?? job.programArguments.first {
+        return URL(filePath: executable).lastPathComponent
+    }
+    return friendlyServiceName(for: job)
+}
+
+private func friendlyServiceName(for job: LaunchJobSummary) -> String {
+    let text = serviceText(job: job)
+
+    if text.contains("cleanup-deps") {
+        return "cleanup-deps"
+    }
+    if text.contains("mac-heartbeat") {
+        return "mac-heartbeat"
+    }
+    if text.contains("voice-memos") {
+        return "voice-memos watcher"
+    }
+    if text.contains("cloudflared") {
+        return "cloudflared"
+    }
+    if text.contains("watchman") {
+        return "watchman"
+    }
+    if text.contains("keystone") {
+        return "Google Keystone"
+    }
+
+    let parts = job.label.split(separator: ".").map(String.init)
+    if let last = parts.last, !last.isEmpty {
+        return last
+    }
+    return job.label
+}
+
+private func shortPath(_ value: String) -> String {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    if value.hasPrefix(home) {
+        return "~" + value.dropFirst(home.count)
+    }
+    return value
+}
+
 private func serviceText(job: LaunchJobSummary, plist: LaunchPlist? = nil) -> String {
     [
         job.label,
@@ -666,16 +1254,56 @@ private func boolText(_ value: Bool?) -> String {
     return value ? "예" : "아니오"
 }
 
-private func describe(_ schedule: CalendarSchedule) -> String {
-    [
-        schedule.month.map { "\($0)월" },
-        schedule.day.map { "\($0)일" },
-        schedule.weekday.map { "요일 \($0)" },
-        schedule.hour.map { "\($0)시" },
-        schedule.minute.map { "\($0)분" },
-    ]
-    .compactMap { $0 }
-    .joined(separator: " ")
+private func calendarScheduleText(_ schedule: CalendarSchedule) -> String {
+    let datePrefix: String
+    if let month = schedule.month, let day = schedule.day {
+        datePrefix = "매년 \(month)월 \(day)일"
+    } else if let day = schedule.day {
+        datePrefix = "매월 \(day)일"
+    } else if let weekday = schedule.weekday {
+        datePrefix = "매주 \(weekdayName(weekday))"
+    } else if schedule.hour != nil || schedule.minute != nil {
+        datePrefix = "매일"
+    } else {
+        datePrefix = "예약 시간"
+    }
+
+    let time: String
+    switch (schedule.hour, schedule.minute) {
+    case let (.some(hour), .some(minute)):
+        time = String(format: "%02d:%02d", hour, minute)
+    case let (.some(hour), .none):
+        time = "\(hour)시"
+    case let (.none, .some(minute)):
+        time = "매시 \(minute)분"
+    case (.none, .none):
+        time = ""
+    }
+
+    return [datePrefix, time]
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+}
+
+private func weekdayName(_ value: Int) -> String {
+    switch value {
+    case 0, 7:
+        return "일요일"
+    case 1:
+        return "월요일"
+    case 2:
+        return "화요일"
+    case 3:
+        return "수요일"
+    case 4:
+        return "목요일"
+    case 5:
+        return "금요일"
+    case 6:
+        return "토요일"
+    default:
+        return "요일 \(value)"
+    }
 }
 
 private func koreanDomain(_ name: String) -> String {
