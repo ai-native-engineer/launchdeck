@@ -1,10 +1,16 @@
 # LaunchDeck
 
+[![macOS](https://img.shields.io/badge/macOS-14%2B-lightgrey.svg)](#requirements)
+[![Swift](https://img.shields.io/badge/Swift-6-orange.svg)](Package.swift)
+
 LaunchDeck is a macOS app and CLI for inspecting and operating `launchd` jobs.
 
 It is built for the local automation workflow: find a LaunchAgent, check whether
 `launchd` has loaded it, run it now, inspect logs when needed, edit the command
 paths for user automations, and try again.
+
+Project status: early source build. Release artifacts, signing, notarization,
+and installer packaging are not included yet.
 
 ## What it does
 
@@ -27,16 +33,20 @@ paths are read-only in this project.
 - Swift 6 toolchain
 - Apple platform tools available from PATH: `launchctl` and `plutil`
 
-## Run the app
+## Install from source
 
 ```bash
+cd LaunchDeck
 ./scripts/run-app.sh
 ```
 
 The script builds `LaunchDeckApp`, creates a local `.build/LaunchDeck.app`
 bundle, validates its `Info.plist`, and opens the app.
 
-## Build and test
+If a release build exists later, prefer the signed release artifact over running
+from source.
+
+## Development
 
 ```bash
 swift build
@@ -54,6 +64,14 @@ RUN_LIVE_LAUNCHD=1 ./scripts/proof.sh
 
 The live proof only uses labels matching `io.github.launchdeck.proof.*` and
 cleans up its generated plist, script, task metadata, and marker file.
+
+## Tech stack
+
+- Swift Package Manager
+- SwiftUI macOS app target
+- Shared Swift core module
+- Small CLI target for proofable launchd workflows
+- XCTest for core behavior
 
 ## CLI quick start
 
@@ -83,6 +101,26 @@ App-owned tasks use labels under `io.github.launchdeck.task.*`, metadata under
 - [CLI reference](docs/cli.md)
 - [Safety model](docs/safety.md)
 
+## Contributing
+
+Small, focused pull requests are easiest to review. Before opening a PR, run:
+
+```bash
+swift build
+swift test
+./scripts/proof.sh
+```
+
+For changes touching launchd behavior, also run the opt-in live proof:
+
+```bash
+RUN_LIVE_LAUNCHD=1 ./scripts/proof.sh
+```
+
+Do not add write access for system LaunchAgents or LaunchDaemons without a
+separate design discussion. The current safety boundary is user LaunchAgents
+only.
+
 ## Repository layout
 
 ```text
@@ -101,5 +139,7 @@ LaunchDeck currently focuses on user LaunchAgents and app-owned task generation.
 It does not install privileged helpers, edit `/System/Library/*`, edit
 `/Library/LaunchDaemons`, notarize release builds, or package a signed installer.
 
-Before making the repository public for reuse, choose a license and add release
-screenshots or signed artifacts if those are part of the distribution plan.
+## License
+
+No license has been selected yet. Add a `LICENSE` file before presenting this as
+open source; without one, others do not have clear reuse rights.
