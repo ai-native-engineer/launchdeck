@@ -4,12 +4,12 @@ Creates and diagnoses macOS user LaunchAgents.
 
 ## Source material
 
-This skill was written from the local official-docs corpus:
+This skill was written from Apple's launchd documentation:
 
-- `~/Playground/launchd-official-docs/man/launchd.plist.5.md`
-- `~/Playground/launchd-official-docs/man/launchctl.1.md`
-- `~/Playground/launchd-official-docs/apple-archive/creating-launch-daemons-and-agents.md`
-- `~/Playground/launchd-official-docs/apple-archive/scheduling-timed-jobs.md`
-- `~/Playground/launchd-official-docs/apple-archive/tn2083-daemons-and-agents.md`
+- `launchd.plist(5)`
+- `launchctl(1)`
+- Creating Launch Daemons and Agents
+- Scheduling Timed Jobs
+- Technical Note TN2083, Daemons and Agents
 
 The SKILL.md avoids copying full manpage option catalogs. The reference playbook keeps only the operational workflow and common failure modes.

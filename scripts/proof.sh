@@ -62,8 +62,7 @@ trap cleanup EXIT
 no_placeholders() {
   local pattern
   pattern='TB''D|TO''DO|FIX''ME|\{\{[^}]+\}\}'
-  ! rg -n --glob '!/.git/**' --glob '!/.build/**' --glob '!progress.tsv' \
-    "$pattern" .
+  ! rg -n --glob '!/.git/**' --glob '!/.build/**' "$pattern" .
 }
 
 render_and_lint_fixtures() {
