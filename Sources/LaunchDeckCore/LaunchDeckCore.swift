@@ -10,6 +10,7 @@ public enum LaunchDeckError: Error, CustomStringConvertible, LocalizedError {
     case nonAppOwnedLabel(String)
     case missingExecutable(String)
     case invalidSchedule(String)
+    case commandFailed(String, CommandResult)
     case unsafePath(URL)
     case invalidPlist(URL)
 
@@ -23,6 +24,8 @@ public enum LaunchDeckError: Error, CustomStringConvertible, LocalizedError {
             "LaunchAgent has neither Program nor ProgramArguments: \(label)"
         case let .invalidSchedule(message):
             "Invalid schedule: \(message)"
+        case let .commandFailed(command, result):
+            "\(command) failed with exit \(result.exitCode): \(result.standardError)"
         case let .unsafePath(url):
             "Path is outside LaunchDeck-owned locations: \(url.path)"
         case let .invalidPlist(url):
@@ -109,7 +112,10 @@ public struct LaunchJobSummary: Equatable, Identifiable, Sendable {
     public let isWritable: Bool
     public let program: String?
     public let programArguments: [String]
+    public let standardOutPath: String?
+    public let standardErrorPath: String?
     public let parseError: String?
+    public var isAppOwned: Bool { label.hasPrefix(LaunchDeck.labelPrefix + ".") }
 
     public init(
         label: String,
@@ -118,6 +124,8 @@ public struct LaunchJobSummary: Equatable, Identifiable, Sendable {
         isWritable: Bool,
         program: String? = nil,
         programArguments: [String] = [],
+        standardOutPath: String? = nil,
+        standardErrorPath: String? = nil,
         parseError: String? = nil
     ) {
         self.label = label
@@ -126,6 +134,8 @@ public struct LaunchJobSummary: Equatable, Identifiable, Sendable {
         self.isWritable = isWritable
         self.program = program
         self.programArguments = programArguments
+        self.standardOutPath = standardOutPath
+        self.standardErrorPath = standardErrorPath
         self.parseError = parseError
     }
 }
@@ -158,7 +168,9 @@ public struct LaunchInventoryService: Sendable {
                             domainName: domain.name,
                             isWritable: domain.allowsWrites,
                             program: plist.program,
-                            programArguments: plist.programArguments
+                            programArguments: plist.programArguments,
+                            standardOutPath: plist.standardOutPath,
+                            standardErrorPath: plist.standardErrorPath
                         )
                     } catch {
                         return LaunchJobSummary(

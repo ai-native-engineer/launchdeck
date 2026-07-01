@@ -59,6 +59,7 @@ final class LaunchDeckCoreTests: XCTestCase {
         XCTAssertEqual(inventory.map(\.label), ["com.example.system", "dev.seunan.launchdeck.inventory"])
         XCTAssertEqual(inventory.first?.isWritable, false)
         XCTAssertEqual(inventory.last?.isWritable, true)
+        XCTAssertTrue(inventory.last?.isAppOwned == true)
         XCTAssertEqual(inventory.last?.programArguments, ["/bin/echo", "user"])
     }
 
@@ -183,6 +184,47 @@ final class LaunchDeckCoreTests: XCTestCase {
         )
 
         XCTAssertThrowsError(try task.launchPlist())
+    }
+
+    func testLaunchDeckServiceRunsTaskLifecycleThroughSharedCore() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var calls: [[String]] = []
+        let runner = CommandRunner { executable, arguments in
+            calls.append([executable] + arguments)
+            return CommandResult(exitCode: 0, standardOutput: "ok\n")
+        }
+        let paths = LaunchDeckPaths(home: root)
+        let service = LaunchDeckService(paths: paths, runner: runner, uid: 501)
+        let task = try ManagedTaskTemplate.interval(
+            id: "svc",
+            title: "Service",
+            programArguments: ["/bin/echo", "service"],
+            everySeconds: 60,
+            paths: paths
+        )
+
+        try service.save(task)
+        try service.load(id: "svc")
+        try service.runNow(id: "svc")
+        try service.enable(id: "svc")
+        try service.disable(id: "svc")
+        try service.unload(id: "svc")
+        _ = try service.status(id: "svc")
+
+        let plistPath = root.appending(path: "Library/LaunchAgents/dev.seunan.launchdeck.task.svc.plist").path
+        XCTAssertTrue(FileManager.default.fileExists(atPath: plistPath))
+        XCTAssertEqual(calls, [
+            ["/usr/bin/env", "plutil", "-lint", plistPath],
+            ["/usr/bin/env", "launchctl", "bootstrap", "gui/501", plistPath],
+            ["/usr/bin/env", "launchctl", "kickstart", "-kp", "gui/501/dev.seunan.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "enable", "gui/501/dev.seunan.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "disable", "gui/501/dev.seunan.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "bootout", "gui/501", plistPath],
+            ["/usr/bin/env", "launchctl", "print", "gui/501/dev.seunan.launchdeck.task.svc"],
+            ["/usr/bin/env", "launchctl", "print-disabled", "gui/501"],
+        ])
     }
 
     private func temporaryDirectory() throws -> URL {
