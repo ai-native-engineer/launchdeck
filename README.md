@@ -141,5 +141,4 @@ It does not install privileged helpers, edit `/System/Library/*`, edit
 
 ## License
 
-No license has been selected yet. Add a `LICENSE` file before presenting this as
-open source; without one, others do not have clear reuse rights.
+MIT. See [LICENSE](LICENSE).
