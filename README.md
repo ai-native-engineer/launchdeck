@@ -9,8 +9,7 @@ It is built for the local automation workflow: find a LaunchAgent, check whether
 `launchd` has loaded it, run it now, inspect logs when needed, edit the command
 paths for user automations, and try again.
 
-Project status: early source build. Release artifacts, signing, notarization,
-and installer packaging are not included yet.
+Project status: early release. DMG artifacts are unsigned and not notarized yet.
 
 ## What it does
 
@@ -33,6 +32,13 @@ paths are read-only in this project.
 - Swift 6 toolchain
 - Apple platform tools available from PATH: `launchctl` and `plutil`
 
+## Install from release
+
+Download `LaunchDeck-<version>-<arch>.dmg` from GitHub Releases, open it, and
+drag `LaunchDeck.app` to Applications.
+
+Current release artifacts are unsigned and not notarized.
+
 ## Install from source
 
 ```bash
@@ -52,6 +58,7 @@ from source.
 swift build
 swift test
 ./scripts/proof.sh
+./scripts/package-dmg.sh 0.1.0
 ```
 
 `scripts/proof.sh` runs the build, tests, placeholder scan, fixture plist
@@ -129,7 +136,7 @@ Sources/LaunchDeckCLI/       launchdeck command-line interface
 Sources/LaunchDeckCore/      plist, launchctl, task, and inventory logic
 Tests/LaunchDeckCoreTests/   core behavior and launchctl wrapper tests
 Fixtures/managed-tasks/      sample managed task JSON fixtures
-scripts/                    local app runner and proof script
+scripts/                    local app runner, DMG packager, and proof script
 docs/                       project documentation
 ```
 
