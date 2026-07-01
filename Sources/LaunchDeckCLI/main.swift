@@ -92,6 +92,12 @@ struct LaunchDeckCLI {
             for entry in try LaunchDeckService().history(id: args[1]) {
                 print("\(entry.taskID)\t\(entry.action.rawValue)\t\(entry.exitCode)\t\(entry.occurredAt)")
             }
+        case "diagnose":
+            guard args.count == 2 else { throw CLIError.usage }
+            print(try LaunchDeckService().status(id: args[1]).rawDiagnosticOutput)
+        case "inspect-raw":
+            guard args.count == 3 else { throw CLIError.usage }
+            print(try Launchctl().status(label: args[1], plistURL: URL(filePath: args[2])).rawDiagnosticOutput)
         case "log":
             guard args.count == 3, let stream = LogStream(rawValue: args[2]) else {
                 throw CLIError.usage
@@ -173,8 +179,9 @@ private enum CLIError: Error, CustomStringConvertible {
           launchdeck create-interval <id> <seconds> -- <program> [args...]
           launchdeck create-calendar <id> <minute> <hour> -- <program> [args...]
           launchdeck create-one-shot <id> <unix-seconds> -- <program> [args...]
-          launchdeck load|unload|run|enable|disable|status|history <id>
+          launchdeck load|unload|run|enable|disable|status|history|diagnose <id>
           launchdeck inspect <label> <plist-path>
+          launchdeck inspect-raw <label> <plist-path>
           launchdeck log <id> <stdout|stderr>
           launchdeck render-plist <task-json> <plist-output>
           launchdeck version

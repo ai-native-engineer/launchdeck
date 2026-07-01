@@ -78,10 +78,14 @@ private struct JobDetailView: View {
                 Button("Enable") { run("enable") { try Launchctl().enable(label: job.label) } }
                 Button("Disable") { run("disable") { try Launchctl().disable(label: job.label) } }
                 Button("Run Now") { run("run") { try Launchctl().kickstart(label: job.label) } }
+            }
+            .disabled(!canManage)
+
+            HStack {
+                Button("Diagnose") { diagnose() }
                 Button("Open Log") { openLog() }
                     .disabled(job.standardOutPath == nil && job.standardErrorPath == nil)
             }
-            .disabled(!canManage)
 
             if !message.isEmpty {
                 Text(message)
@@ -110,5 +114,14 @@ private struct JobDetailView: View {
         }
 
         NSWorkspace.shared.open(URL(filePath: path))
+    }
+
+    private func diagnose() {
+        do {
+            let status = try Launchctl().status(label: job.label, plistURL: job.plistURL)
+            message = status.rawDiagnosticOutput.isEmpty ? "No diagnostic output" : status.rawDiagnosticOutput
+        } catch {
+            message = "diagnose: \(error)"
+        }
     }
 }

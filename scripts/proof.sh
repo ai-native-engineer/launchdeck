@@ -158,6 +158,9 @@ live_launchd_check() {
   printf '%s\n' "$status_output" | grep -Eq 'running_pid=[0-9]+' || return 1
   printf '%s\n' "$status_output" | grep -Eq 'last_exit_status=[0-9]+' || return 1
   printf '%s\n' "$status_output" | grep -q 'disabled=false' || return 1
+  local raw_output
+  raw_output="$(.build/debug/launchdeck inspect-raw "$LIVE_LABEL" "$LIVE_PLIST")" || return 1
+  printf '%s\n' "$raw_output" | grep -q "$LIVE_LABEL" || return 1
   launchctl bootout "gui/$(id -u)" "$LIVE_PLIST" || return 1
   grep -q 'exit_status=0' "$LIVE_LOG" || return 1
   remove_if_exists "$LIVE_PLIST" "$LIVE_SCRIPT" "$LIVE_TASK_JSON" "$LIVE_MARKER"
