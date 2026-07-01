@@ -1,0 +1,27 @@
+{
+  "afterRunPolicy" : "keep",
+  "createdAt" : 1800000000,
+  "environmentVariables" : {
+    "PATH" : "/usr/bin:/bin"
+  },
+  "id" : "fixture-calendar",
+  "label" : "dev.seunan.launchdeck.fixture.calendar",
+  "programArguments" : [
+    "/bin/echo",
+    "calendar"
+  ],
+  "schedule" : {
+    "calendar" : [
+      {
+        "hour" : 9,
+        "minute" : 15
+      }
+    ],
+    "type" : "calendar"
+  },
+  "standardErrorPath" : "/tmp/LaunchDeckFixtures/calendar.stderr.log",
+  "standardOutPath" : "/tmp/LaunchDeckFixtures/calendar.stdout.log",
+  "title" : "Fixture Calendar",
+  "updatedAt" : 1800000000,
+  "workingDirectory" : "/tmp"
+}

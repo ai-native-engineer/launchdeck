@@ -93,6 +93,10 @@ struct LaunchDeckCLI {
                 throw CLIError.usage
             }
             print(try LaunchDeckService().logText(id: args[1], stream: stream), terminator: "")
+        case "render-plist":
+            guard args.count == 3 else { throw CLIError.usage }
+            let outputURL = try renderPlist(metadataURL: URL(filePath: args[1]), outputURL: URL(filePath: args[2]))
+            print(outputURL.path)
         case "version":
             print("\(LaunchDeck.appName) 0.1.0")
         default:
@@ -128,6 +132,16 @@ struct LaunchDeckCLI {
     private static func defaultEnvironment() -> [String: String] {
         ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"]
     }
+
+    private static func renderPlist(metadataURL: URL, outputURL: URL) throws -> URL {
+        let task = try JSONDecoder().decode(ManagedTask.self, from: Data(contentsOf: metadataURL))
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try task.launchPlist().writeXML(to: outputURL, appOwned: true)
+        return outputURL
+    }
 }
 
 private enum CLIError: Error, CustomStringConvertible {
@@ -144,6 +158,7 @@ private enum CLIError: Error, CustomStringConvertible {
           launchdeck create-one-shot <id> <unix-seconds> -- <program> [args...]
           launchdeck load|unload|run|enable|disable|status <id>
           launchdeck log <id> <stdout|stderr>
+          launchdeck render-plist <task-json> <plist-output>
           launchdeck version
         """
     }

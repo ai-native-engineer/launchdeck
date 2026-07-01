@@ -1,0 +1,22 @@
+{
+  "afterRunPolicy" : "cleanupPlist",
+  "createdAt" : 1800000000,
+  "environmentVariables" : {
+    "PATH" : "/usr/bin:/bin"
+  },
+  "id" : "fixture-one-shot",
+  "label" : "dev.seunan.launchdeck.fixture.one-shot",
+  "programArguments" : [
+    "/bin/echo",
+    "one-shot"
+  ],
+  "schedule" : {
+    "date" : 1800000000,
+    "type" : "oneShot"
+  },
+  "standardErrorPath" : "/tmp/LaunchDeckFixtures/one-shot.stderr.log",
+  "standardOutPath" : "/tmp/LaunchDeckFixtures/one-shot.stdout.log",
+  "title" : "Fixture One Shot",
+  "updatedAt" : 1800000000,
+  "workingDirectory" : "/tmp"
+}

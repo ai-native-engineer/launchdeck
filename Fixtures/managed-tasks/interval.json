@@ -1,0 +1,23 @@
+{
+  "afterRunPolicy" : "keep",
+  "createdAt" : 1800000000,
+  "environmentVariables" : {
+    "PATH" : "/usr/bin:/bin"
+  },
+  "id" : "fixture-interval",
+  "label" : "dev.seunan.launchdeck.fixture.interval",
+  "programArguments" : [
+    "/bin/echo",
+    "interval"
+  ],
+  "schedule" : {
+    "seconds" : 300,
+    "type" : "interval"
+  },
+  "standardErrorPath" : "/tmp/LaunchDeckFixtures/interval.stderr.log",
+  "standardOutPath" : "/tmp/LaunchDeckFixtures/interval.stdout.log",
+  "timeoutSeconds" : 30,
+  "title" : "Fixture Interval",
+  "updatedAt" : 1800000000,
+  "workingDirectory" : "/tmp"
+}
